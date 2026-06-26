@@ -1,4 +1,4 @@
-import { clamp } from "./ui.js?v=landscape9";
+import { clamp } from "./ui.js?v=landscape10";
 
 const NODE_RADIUS = 12;
 const BEAM_PICK_DISTANCE = 18;

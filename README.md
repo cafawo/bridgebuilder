@@ -49,7 +49,9 @@ style: dark grid, rock silhouettes, water, anchor nodes, straight beams, and sim
 
 The full-page captures used to make this gallery are kept in `screenshots/procedural/`.
 
-## Procedural Terrain Technology
+## The Science Behind
+
+### Procedural Generation
 
 The generator lives in `game/views.py`. It uses deterministic randomness from a normalized seed:
 the seed is hashed with SHA-256, the first eight digest bytes initialize Python's `random.Random`,
@@ -97,6 +99,91 @@ organic signal that is remapped onto 2D terrain profiles:
 
 The result is a small procedural system with a stable gameplay contract: every map is just JSON, and
 the browser renderer/editor/physics stack treats generated and hand-authored levels the same way.
+
+### Physics Simulation
+
+The bridge simulation lives in `game/static/game/js/physics.js`. It is not a full finite-element
+solver, but it borrows the useful bits for a browser game: point masses, distance constraints,
+iterative relaxation, stress estimates, and deterministic failure thresholds. The point is to make
+bridge shape matter without making the player wait for a heavyweight structural analysis pass.
+
+Each editor node becomes a simulated particle:
+
+```text
+node = {
+  position: (x, y),
+  previousPosition: (previousX, previousY),
+  fixed: true | false,
+  force: (forceX, forceY)
+}
+```
+
+The integrator is Verlet-style. Instead of storing velocity directly, each free node compares its
+current position with its previous position:
+
+```text
+velocity = (position - previousPosition) * damping
+nextPosition = position + velocity + force * dt^2
+```
+
+That gives cheap inertia and damping with very little state. Fixed anchor nodes skip this update,
+which is why anchor shelves behave like immovable rock sockets while player-created nodes sag,
+swing, and collapse under load.
+
+Beams are distance constraints. When a beam is created, the simulation records its `restLength`.
+On every frame, it repeatedly walks all unbroken beams and tries to push their endpoints back toward
+that length:
+
+```text
+delta = currentLength - restLength
+correction = (delta / currentLength) * beamStiffness
+```
+
+The correction is split between endpoints unless one endpoint is fixed. Running several constraint
+iterations per frame makes trusses feel stiff enough to drive over, while still allowing bad designs
+to visibly bend before they fail.
+
+Stress is a compact gameplay model built from three signals:
+
+- `selfStress`: long beams start with more stress because their own weight scales with `length^2`.
+- `loadStress`: vehicle wheels add downward force to contacted deck beams and estimate bending load.
+- `axialStress`: stretched or compressed beams accumulate stress from constraint error.
+
+The current formulas are intentionally readable:
+
+```text
+selfStress = (length^2 * deckFactor) / beamSelfWeightCapacity
+bendingStress = (load * restLength * t * (1 - t) * deckFactor) / beamBendingCapacity
+axialStress = abs(currentLength - restLength) / restLength
+```
+
+The `t * (1 - t)` term is the simple beam-bending trick: load near the middle is more punishing than
+load near an endpoint. Deck beams use different factors than support beams because the gameplay
+needs decks to carry wheels while supports should be better as triangulation members.
+
+Beam capacity also changes with role and length:
+
+```text
+capacity = beamBreakStress * roleFactor * lengthFactor
+lengthFactor = max(0.58, 1 - max(0, restLength - 140) * longBeamWeakening)
+```
+
+This keeps long beams legal, but not free. A long straight span might be buildable, yet it starts
+closer to failure and needs support if the vehicle load concentrates near its center.
+
+The vehicle is deliberately simple. It moves horizontally at the level's configured speed, samples
+two wheel contact points, and looks for either ground segments or driveable deck beams under each
+wheel. Contacted beams receive proportional wheel force at their endpoints:
+
+```text
+leftNode.forceY += wheelLoad * (1 - t)
+rightNode.forceY += wheelLoad * t
+```
+
+If both wheels find a surface, the vehicle eases toward that surface and rotates to match its slope.
+If no contact is found, gravity takes over and the vehicle falls. A run ends when the vehicle reaches
+the flag, drops out of the world, enters the water, or enough beams have broken that the bridge is
+considered failed.
 
 ## Setup
 

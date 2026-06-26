@@ -17,6 +17,8 @@ export class BridgeSimulation {
       b: beam.b,
       deck: Boolean(beam.deck),
       restLength: distance(graph.nodes[beam.a], graph.nodes[beam.b]),
+      selfStress: this.beamSelfStress(distance(graph.nodes[beam.a], graph.nodes[beam.b]), Boolean(beam.deck)),
+      loadStress: 0,
       stress: 0,
       broken: false,
     }));
@@ -48,6 +50,13 @@ export class BridgeSimulation {
     for (const node of this.nodes) {
       node.forceX = 0;
       node.forceY = gravity;
+    }
+
+    for (const beam of this.beams) {
+      if (!beam.broken) {
+        beam.loadStress = beam.selfStress;
+        beam.stress = beam.selfStress;
+      }
     }
   }
 
@@ -93,7 +102,8 @@ export class BridgeSimulation {
     const t = contact.t;
     a.forceY += load * (1 - t);
     b.forceY += load * t;
-    beam.stress = Math.max(beam.stress, 0.05);
+    beam.loadStress += this.wheelBendingStress(beam, load, t);
+    beam.stress = Math.max(beam.stress, beam.loadStress);
   }
 
   integrateNodes(dt) {
@@ -118,11 +128,13 @@ export class BridgeSimulation {
   solveBeams() {
     const iterations = this.level.physics.constraintIterations;
     const stiffness = this.level.physics.beamStiffness;
-    const breakStress = this.level.physics.beamBreakStress;
 
     for (const beam of this.beams) {
       if (!beam.broken) {
-        beam.stress = 0;
+        beam.stress = Math.max(beam.stress, beam.loadStress);
+        if (beam.stress > this.beamCapacity(beam)) {
+          this.breakBeam(beam);
+        }
       }
     }
 
@@ -143,12 +155,11 @@ export class BridgeSimulation {
         }
 
         const delta = currentLength - beam.restLength;
-        const stress = Math.abs(delta) / beam.restLength;
-        beam.stress = Math.max(beam.stress, stress);
+        const axialStress = Math.abs(delta) / beam.restLength;
+        beam.stress = Math.max(beam.stress, axialStress);
 
-        if (stress > breakStress) {
-          beam.broken = true;
-          beam.stress = 1;
+        if (beam.stress > this.beamCapacity(beam)) {
+          this.breakBeam(beam);
           continue;
         }
 
@@ -166,6 +177,34 @@ export class BridgeSimulation {
         b.y -= dy * correction * (inverseB / inverseTotal);
       }
     }
+  }
+
+  beamSelfStress(length, isDeck) {
+    const capacity = this.level.physics.beamSelfWeightCapacity ?? 18000000;
+    const deckFactor = isDeck ? 1.12 : 0.82;
+    return (length * length * deckFactor) / capacity;
+  }
+
+  wheelBendingStress(beam, load, t) {
+    const bendingCapacity = this.level.physics.beamBendingCapacity ?? 2800000;
+    const deckFactor = beam.deck ? 1.15 : 0.78;
+    const lever = Math.max(0, t * (1 - t));
+    return (load * beam.restLength * lever * deckFactor) / bendingCapacity;
+  }
+
+  beamCapacity(beam) {
+    const base = this.level.physics.beamBreakStress;
+    const deckFactor = beam.deck
+      ? this.level.physics.deckStrengthFactor ?? 0.92
+      : this.level.physics.supportStrengthFactor ?? 1.08;
+    const weakening = this.level.physics.longBeamWeakening ?? 0.00035;
+    const lengthFactor = Math.max(0.58, 1 - Math.max(0, beam.restLength - 140) * weakening);
+    return base * deckFactor * lengthFactor;
+  }
+
+  breakBeam(beam) {
+    beam.broken = true;
+    beam.stress = 1;
   }
 
   findSurfaceAt(x) {

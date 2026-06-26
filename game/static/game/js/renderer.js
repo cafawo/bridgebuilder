@@ -1,4 +1,4 @@
-import { formatCost, modeLabel } from "./ui.js?v=landscape9";
+import { formatCost, modeLabel } from "./ui.js?v=landscape10";
 
 export class Renderer {
   constructor(canvas, level) {

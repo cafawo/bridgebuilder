@@ -19,7 +19,7 @@ class GameViewTests(SimpleTestCase):
         self.assertContains(response, 'id="seed-input"', html=False)
         self.assertContains(response, "data-random-level-url", html=False)
         self.assertContains(response, "game/js/main.js")
-        self.assertContains(response, "?v=landscape9")
+        self.assertContains(response, "?v=landscape10")
 
     def test_seeded_level_endpoint_generates_superformula_level(self):
         response = self.client.get(reverse("game:random-level"), {"seed": "test-seed"})
@@ -66,6 +66,9 @@ class ProceduralLevelTests(SimpleTestCase):
         self.assertGreaterEqual(len(data["backdrop"]["layers"]), 1)
         self.assertGreaterEqual(len(data["details"]["strata"]), 4)
         self.assertNotIn("maxBeamLength", data)
+        self.assertIn("beamBendingCapacity", data["physics"])
+        self.assertIn("beamSelfWeightCapacity", data["physics"])
+        self.assertIn("longBeamWeakening", data["physics"])
 
     def test_generated_level_is_deterministic_for_same_seed(self):
         self.assertEqual(generate_random_level("same-seed"), generate_random_level("same-seed"))
@@ -209,10 +212,19 @@ class ProceduralLevelTests(SimpleTestCase):
         editor_source = Path("game/static/game/js/editor.js").read_text(encoding="utf-8")
         renderer_source = Path("game/static/game/js/renderer.js").read_text(encoding="utf-8")
 
-        self.assertIn("./editor.js?v=landscape9", main_source)
-        self.assertIn("./renderer.js?v=landscape9", main_source)
-        self.assertIn("./ui.js?v=landscape9", editor_source)
-        self.assertIn("./ui.js?v=landscape9", renderer_source)
+        self.assertIn("./editor.js?v=landscape10", main_source)
+        self.assertIn("./physics.js?v=landscape10", main_source)
+        self.assertIn("./renderer.js?v=landscape10", main_source)
+        self.assertIn("./ui.js?v=landscape10", editor_source)
+        self.assertIn("./ui.js?v=landscape10", renderer_source)
+
+    def test_physics_models_long_span_bending_stress(self):
+        source = Path("game/static/game/js/physics.js").read_text(encoding="utf-8")
+
+        self.assertIn("wheelBendingStress", source)
+        self.assertIn("beamSelfStress", source)
+        self.assertIn("beamCapacity", source)
+        self.assertIn("longBeamWeakening", source)
 
 
 def has_central_ridge_above_water(data):
