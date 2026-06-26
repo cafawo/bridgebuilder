@@ -1,0 +1,41 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #17191c;
+  color: #e6e6e6;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.game-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+#game-canvas {
+  width: min(100%, 900px);
+  max-height: calc(100vh - 32px);
+  aspect-ratio: 900 / 560;
+  display: block;
+  background: #24282d;
+  border: 1px solid #08090b;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  cursor: crosshair;
+  image-rendering: pixelated;
+  outline: none;
+  touch-action: none;
+}
+
+#game-canvas:focus {
+  border-color: #8a8a8a;
+}

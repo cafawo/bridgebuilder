@@ -1,0 +1,25 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bridge Builder</title>
+    <link rel="stylesheet" href="{% static 'game/css/style.css' %}">
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas
+        id="game-canvas"
+        width="900"
+        height="560"
+        tabindex="0"
+        aria-label="Bridge Builder game"
+        data-level-url="{% url 'game:level-json' 'level_01' %}"
+        data-level-list-url="{% url 'game:level-index' %}"
+        data-random-level-url="{% url 'game:random-level' 'seed' %}"
+      ></canvas>
+    </main>
+    <script type="module" src="{% static 'game/js/main.js' %}"></script>
+  </body>
+</html>
