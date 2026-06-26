@@ -12,6 +12,8 @@ and budgets.
 
 This repository is designed to publish directly from `main` at `/`, matching GitHub Pages'
 "Deploy from a branch" root configuration.
+There is no build step: GitHub Pages serves `index.html`, `.nojekyll`, `static/`, and
+`screenshots/` directly from the repository.
 
 Open the published project page:
 
@@ -24,6 +26,13 @@ Seeded levels are shareable through the query string:
 ```text
 https://cafawo.github.io/bridgebuilder/?seed=smoke-seed
 ```
+
+Deployment checklist:
+
+- Commit the root `index.html`, `.nojekyll`, `static/`, `screenshots/`, and docs.
+- Push to `main`.
+- Wait for the GitHub Pages publish step to finish.
+- Open the project page and verify a seed URL renders the canvas.
 
 ## Procedural Biome Gallery
 
@@ -68,9 +77,10 @@ The full-page captures used to make this gallery are kept in `screenshots/proced
 
 ## Procedural Generation
 
-The generator lives in `static/game/js/generator.js`. It uses a deterministic string-seeded PRNG,
-so each normalized seed maps to one stable level. The generated level object is consumed directly
-by the existing editor, renderer, and physics code; there is no server-side JSON endpoint.
+The generator lives in `static/game/js/generator.js`. It runs synchronously in the browser with a
+deterministic string-seeded PRNG, so each normalized seed maps to one stable level. The generated
+level object is consumed directly by the editor, renderer, and physics code; there is no runtime
+level API to host.
 
 The core shape source is the Superformula:
 
@@ -90,6 +100,9 @@ The generator chooses a weighted biome regime, builds shore profiles and optiona
 clips organic water polygons inside the bridge gap, adds anchor platforms, and emits vehicle,
 physics, budget, terrain, backdrop, and detail data.
 
+Generation is intentionally small enough to stay on the main thread. The expensive work during play
+is still the per-frame canvas rendering and bridge simulation, not creating a seeded level.
+
 ## Physics Simulation
 
 The simulation lives in `static/game/js/physics.js`. It uses point masses, Verlet-style integration,
@@ -101,7 +114,7 @@ lower or steep beams act as supports.
 
 ## Local Run
 
-Create or update the conda environment:
+Create or update the conda environment used for local checks:
 
 ```bash
 conda env create -f environment.yml
@@ -119,6 +132,8 @@ Open:
 ```text
 http://127.0.0.1:8000/?seed=smoke-seed
 ```
+
+If port `8000` is busy, use another port and keep the same `?seed=...` query string.
 
 ## Controls
 
