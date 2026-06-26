@@ -76,7 +76,7 @@ body {
 #game-canvas {
   width: min(calc(100vw - 20px), 1320px);
   max-height: calc(100vh - 58px);
-  aspect-ratio: 1100 / 650;
+  aspect-ratio: 1240 / 700;
   display: block;
   background: #24282d;
   cursor: crosshair;

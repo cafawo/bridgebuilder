@@ -39,7 +39,7 @@ window.bridgebuilderDebug = {
 async function bootstrap() {
   try {
     bindInput();
-    await loadSeed(randomSeed());
+    await loadSeed(seedFromLocation() || randomSeed());
     canvas.focus();
     requestAnimationFrame(loop);
   } catch (error) {
@@ -211,6 +211,10 @@ function levelUrl(seed) {
 
 function normalizeSeed(seed) {
   return seed.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 48) || randomSeed();
+}
+
+function seedFromLocation() {
+  return new URLSearchParams(window.location.search).get("seed") || "";
 }
 
 function randomSeed() {

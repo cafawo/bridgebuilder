@@ -19,6 +19,7 @@ function validateLevel(level) {
     "canvas",
     "terrain",
     "water",
+    "waterBodies",
     "anchors",
     "start",
     "goal",
@@ -27,6 +28,8 @@ function validateLevel(level) {
     "budget",
     "costs",
     "physics",
+    "backdrop",
+    "details",
   ];
   for (const key of requiredKeys) {
     if (!(key in level)) {
@@ -44,5 +47,9 @@ function validateLevel(level) {
 
   if (!level.procedural || !level.seed || level.generator?.name !== "superformula") {
     throw new Error("Level must be generated from a Superformula seed");
+  }
+
+  if (!level.generator?.regime || !Array.isArray(level.waterBodies)) {
+    throw new Error("Level must include procedural visual regimes");
   }
 }

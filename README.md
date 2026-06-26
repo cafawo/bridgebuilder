@@ -5,11 +5,14 @@ page, static files, and level JSON; the actual bridge editor, simulation, render
 stress, breakage, and vehicle crossing run in the browser with vanilla JavaScript and HTML5
 Canvas.
 
-The visual reference screenshots are stored in `screenshots/`.
+The visual reference screenshots are stored in `screenshots/`. Generated screenshots used to
+inspect the current procedural regimes are stored in `screenshots/procedural/`.
 
 The game creates every map from a seed. Fresh page loads generate a new random seed, and entering
-the same seed in the seed field recreates the same bridge problem. The procedural terrain uses a 2D
-Superformula-derived curve to vary cliffs and riverbeds:
+the same seed in the seed field recreates the same bridge problem. The procedural generator picks
+between riverlands, marsh flats, highlands, alpine gorges, split valleys, and canyons, then uses
+2D Superformula-derived curves for cliff walls, basin floors, water bodies, backdrop ridges, and
+cliff anchor shelves:
 https://en.wikipedia.org/wiki/Superformula
 
 ## Setup

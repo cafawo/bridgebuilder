@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bridge Builder</title>
-    <link rel="stylesheet" href="{% static 'game/css/style.css' %}?v=landscape2">
+    <link rel="stylesheet" href="{% static 'game/css/style.css' %}?v=landscape4">
   </head>
   <body>
     <main class="game-shell">
@@ -19,13 +19,13 @@
       </form>
       <canvas
         id="game-canvas"
-        width="1100"
-        height="650"
+        width="1240"
+        height="700"
         tabindex="0"
         aria-label="Bridge Builder game"
         data-random-level-url="{% url 'game:random-level' %}"
       ></canvas>
     </main>
-    <script type="module" src="{% static 'game/js/main.js' %}?v=landscape2"></script>
+    <script type="module" src="{% static 'game/js/main.js' %}?v=landscape4"></script>
   </body>
 </html>

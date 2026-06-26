@@ -17,7 +17,7 @@ class GameViewTests(SimpleTestCase):
         self.assertContains(response, 'id="seed-input"', html=False)
         self.assertContains(response, "data-random-level-url", html=False)
         self.assertContains(response, "game/js/main.js")
-        self.assertContains(response, "?v=landscape2")
+        self.assertContains(response, "?v=landscape4")
 
     def test_seeded_level_endpoint_generates_superformula_level(self):
         response = self.client.get(reverse("game:random-level"), {"seed": "test-seed"})
@@ -51,12 +51,18 @@ class ProceduralLevelTests(SimpleTestCase):
             "seed",
             "generator",
             "anchorPlatforms",
+            "waterBodies",
+            "backdrop",
+            "details",
         }
 
         self.assertLessEqual(required_keys, data.keys())
-        self.assertGreaterEqual(data["canvas"]["width"], 1100)
-        self.assertGreaterEqual(data["canvas"]["height"], 650)
+        self.assertGreaterEqual(data["canvas"]["width"], 1240)
+        self.assertGreaterEqual(data["canvas"]["height"], 700)
         self.assertGreaterEqual(len(data["anchors"]), 6)
+        self.assertGreaterEqual(len(data["waterBodies"]), 1)
+        self.assertGreaterEqual(len(data["backdrop"]["layers"]), 1)
+        self.assertGreaterEqual(len(data["details"]["strata"]), 4)
 
     def test_generated_level_is_deterministic_for_same_seed(self):
         self.assertEqual(generate_random_level("same-seed"), generate_random_level("same-seed"))
@@ -76,6 +82,13 @@ class ProceduralLevelTests(SimpleTestCase):
         self.assertLessEqual(water["x"] + water["width"], right_ground["x1"])
         self.assertGreater(water["y"], data["roadY"])
 
+        for body in data["waterBodies"]:
+            xs = [point[0] for point in body["points"]]
+            ys = [point[1] for point in body["points"]]
+            self.assertGreaterEqual(min(xs), left_ground["x2"])
+            self.assertLessEqual(max(xs), right_ground["x1"])
+            self.assertGreater(min(ys), data["roadY"])
+
     def test_terrain_uses_one_rock_material(self):
         data = generate_random_level("material-seed")
         colors = {terrain["color"] for terrain in data["terrain"]}
@@ -87,7 +100,7 @@ class ProceduralLevelTests(SimpleTestCase):
         platform_kinds = {platform["kind"] for platform in data["anchorPlatforms"]}
 
         self.assertEqual(len(data["terrain"]), 1)
-        self.assertGreaterEqual(len(data["terrain"][0]["points"]), 60)
+        self.assertGreaterEqual(len(data["terrain"][0]["points"]), 75)
         self.assertLessEqual(platform_kinds, {"road", "cliff"})
         self.assertIn("cliff", platform_kinds)
         self.assertNotIn("edgeColor", data["terrain"][0])
@@ -116,3 +129,57 @@ class ProceduralLevelTests(SimpleTestCase):
         }
 
         self.assertGreaterEqual(len(layouts), 4)
+
+    def test_many_seeds_cover_multiple_visual_regimes(self):
+        regimes = {
+            generate_random_level(f"regime-{index}")["generator"]["regime"]
+            for index in range(80)
+        }
+
+        self.assertGreaterEqual(len(regimes), 7)
+        self.assertIn("swampland", regimes)
+
+    def test_random_seeds_have_strong_visual_variation(self):
+        signatures = set()
+        for index in range(18):
+            data = generate_random_level(f"variation-{index}")
+            water_width = round(data["water"]["width"] / 40) * 40
+            anchor_heights = tuple(sorted({anchor["y"] for anchor in data["anchors"]}))
+            signatures.add(
+                (
+                    data["generator"]["regime"],
+                    len(data["waterBodies"]),
+                    len(data["backdrop"]["layers"]),
+                    water_width,
+                    anchor_heights,
+                )
+            )
+
+        self.assertGreaterEqual(len(signatures), 12)
+
+    def test_split_valley_regime_can_raise_a_central_basin_ridge(self):
+        examples = [
+            generate_random_level(f"split-example-{index}")
+            for index in range(40)
+        ]
+        split_examples = [
+            data for data in examples if data["generator"]["regime"] == "split_valley"
+        ]
+
+        self.assertTrue(split_examples)
+        self.assertTrue(
+            any(has_central_ridge_above_water(data) for data in split_examples)
+        )
+
+
+def has_central_ridge_above_water(data):
+    midpoint = data["water"]["x"] + data["water"]["width"] / 2
+    central_points = [
+        point
+        for point in data["terrain"][0]["points"]
+        if abs(point[0] - midpoint) <= 70
+    ]
+
+    return bool(central_points) and (
+        min(point[1] for point in central_points) <= data["water"]["y"] + 18
+    )

@@ -17,8 +17,11 @@ export class Renderer {
     const ctx = this.context;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.drawBackground(ctx);
+    this.drawBackdrop(ctx);
     this.drawWater(ctx);
     this.drawTerrain(ctx);
+    this.drawTerrainDetails(ctx);
+    this.drawDecorations(ctx);
     this.drawRoadEdges(ctx);
 
     if (mode === "simulation" && simulation) {
@@ -62,14 +65,53 @@ export class Renderer {
   }
 
   drawWater(ctx) {
-    const water = this.level.water;
-    ctx.fillStyle = water.color || "#11106d";
-    ctx.fillRect(water.x, water.y, water.width, water.height);
+    const bodies = this.level.waterBodies || [this.level.water];
+    for (const water of bodies) {
+      ctx.fillStyle = water.color || "#11106d";
+      if (water.points) {
+        drawPolygon(ctx, water.points);
+        ctx.fill();
+      } else {
+        ctx.fillRect(water.x, water.y, water.width, water.height);
+      }
+    }
+  }
+
+  drawBackdrop(ctx) {
+    for (const layer of this.level.backdrop?.layers ?? []) {
+      ctx.beginPath();
+      layer.points.forEach(([x, y], index) => {
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.lineTo(this.canvas.width + 80, this.canvas.height);
+      ctx.lineTo(-80, this.canvas.height);
+      ctx.closePath();
+      ctx.fillStyle = layer.color || "rgba(62, 68, 70, 0.28)";
+      ctx.fill();
+    }
   }
 
   drawTerrain(ctx) {
     for (const terrain of this.level.terrain) {
-      ctx.beginPath();
+      drawPolygon(ctx, terrain.points);
+      ctx.fillStyle = terrain.color || "#303335";
+      ctx.fill();
+    }
+  }
+
+  drawTerrainDetails(ctx) {
+    const details = this.level.details;
+    if (!details?.strata?.length) {
+      return;
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    for (const terrain of this.level.terrain) {
       terrain.points.forEach(([x, y], index) => {
         if (index === 0) {
           ctx.moveTo(x, y);
@@ -78,9 +120,33 @@ export class Renderer {
         }
       });
       ctx.closePath();
-      ctx.fillStyle = terrain.color || "#303335";
-      ctx.fill();
     }
+    ctx.clip();
+
+    ctx.lineCap = "round";
+    for (const lineSpec of details.strata) {
+      ctx.strokeStyle = lineSpec.color || "rgba(20, 22, 23, 0.25)";
+      ctx.lineWidth = lineSpec.width || 1;
+      drawPolyline(ctx, lineSpec.points);
+    }
+    ctx.restore();
+  }
+
+  drawDecorations(ctx) {
+    const reeds = this.level.details?.reeds ?? [];
+    if (!reeds.length) {
+      return;
+    }
+
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.lineCap = "round";
+    for (const reed of reeds) {
+      ctx.strokeStyle = reed.color || "rgba(138, 142, 77, 0.72)";
+      line(ctx, reed.x, reed.y + 4, reed.x - 2, reed.y - reed.height);
+      line(ctx, reed.x, reed.y + 4, reed.x + 2, reed.y - reed.height * 0.75);
+    }
+    ctx.restore();
   }
 
   drawRoadEdges(ctx) {
@@ -296,6 +362,30 @@ function drawText(ctx, text, x, y, size, align) {
   ctx.shadowBlur = 0;
   ctx.fillText(text, x, y);
   ctx.shadowColor = "transparent";
+}
+
+function drawPolygon(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], index) => {
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.closePath();
+}
+
+function drawPolyline(ctx, points) {
+  ctx.beginPath();
+  points.forEach(([x, y], index) => {
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.stroke();
 }
 
 function line(ctx, x1, y1, x2, y2) {
