@@ -89,6 +89,18 @@ class ProceduralLevelTests(SimpleTestCase):
             self.assertLessEqual(max(xs), right_ground["x1"])
             self.assertGreater(min(ys), data["roadY"])
 
+    def test_water_bodies_use_organic_non_vertical_banks(self):
+        data = generate_random_level("organic-water-seed")
+
+        for body in data["waterBodies"]:
+            with self.subTest(body=body):
+                points = body["points"]
+                ys = [point[1] for point in points]
+                height = max(ys) - min(ys)
+
+                self.assertGreaterEqual(len(points), 16)
+                self.assertFalse(has_long_vertical_segment(points, max(28, height * 0.28)))
+
     def test_terrain_uses_one_rock_material(self):
         data = generate_random_level("material-seed")
         colors = {terrain["color"] for terrain in data["terrain"]}
@@ -183,3 +195,13 @@ def has_central_ridge_above_water(data):
     return bool(central_points) and (
         min(point[1] for point in central_points) <= data["water"]["y"] + 18
     )
+
+
+def has_long_vertical_segment(points, max_vertical):
+    wrapped = [*points, points[0]]
+    for first, second in zip(wrapped, wrapped[1:], strict=False):
+        dx = abs(first[0] - second[0])
+        dy = abs(first[1] - second[1])
+        if dx <= 2 and dy > max_vertical:
+            return True
+    return False

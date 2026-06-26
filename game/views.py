@@ -489,13 +489,17 @@ def superformula_riverbed(left_edge, right_edge, water_y, floor_y, params, regim
     points = []
     samples = 29 if regime["basins"] == 2 else 23
     width = max(1, right_edge - left_edge)
+    bank_fraction = 0.2 if regime["id"] in {"riverlands", "marshland", "swampland"} else 0.14
+    bank_inset = min(width * 0.12, 58)
     for index in range(samples):
         t = index / (samples - 1)
         phi = -math.pi + t * math.pi * 2
         radius = superformula_radius(phi, params)
         normalized = (min(1.8, radius) / 1.8) - 0.5
-        x = left_edge + width * t
-        y = floor_y + normalized * regime["floor_rough"]
+        x = left_edge + bank_inset + (width - bank_inset * 2) * t
+        deep_t = smoothstep(min(1, min(t, 1 - t) / bank_fraction))
+        floor_target = floor_y + normalized * regime["floor_rough"]
+        y = water_y + 12 + (floor_target - water_y - 12) * deep_t
         y += math.sin(t * math.pi * 4 + params["m"]) * regime["floor_rough"] * 0.18
         y += math.sin(t * math.pi * 9 + params["a"] * 4) * regime["floor_rough"] * 0.08
 
@@ -506,7 +510,7 @@ def superformula_riverbed(left_edge, right_edge, water_y, floor_y, params, regim
             y = y - ridge + left_basin + right_basin
             y = max(water_y - 8, y)
         else:
-            y = max(water_y + 38, y)
+            y = max(water_y + 10, y)
 
         points.append([round(x), snap(y, 2)])
     return {"points": points}
@@ -525,6 +529,9 @@ def water_body(x1, x2, y, height, rng, wave):
     x1 = snap(x1, 2)
     x2 = snap(x2, 2)
     width = max(1, x2 - x1)
+    side_inset = min(width * 0.2, rng.randint(26, 72))
+    bottom_left = snap(x1 + side_inset, 2)
+    bottom_right = snap(x2 - side_inset, 2)
     top = []
     samples = max(4, min(14, round(width / 56)))
     phase = rng.random() * math.pi
@@ -533,14 +540,39 @@ def water_body(x1, x2, y, height, rng, wave):
         x = x1 + (x2 - x1) * t
         top_y = y + math.sin(t * math.pi * 2 + phase) * wave
         top.append([round(x), snap(top_y, 2)])
-    side_inset = min(width * 0.16, rng.randint(18, 56))
+
+    right_bank = []
+    left_bank = []
+    side_samples = 4
+    for index in range(1, side_samples + 1):
+        t = index / side_samples
+        curve = smoothstep(t)
+        bank_wave = math.sin(t * math.pi + phase) * wave * 0.8
+        right_bank.append(
+            [
+                snap(x2 - side_inset * curve + bank_wave, 2),
+                snap(y + height * curve, 2),
+            ]
+        )
+        left_bank.append(
+            [
+                snap(x1 + side_inset * curve - bank_wave, 2),
+                snap(y + height * curve, 2),
+            ]
+        )
+
+    bottom = []
+    bottom_samples = max(4, min(12, round((bottom_right - bottom_left) / 64)))
+    bottom_phase = rng.random() * math.pi * 2
+    for index in range(bottom_samples + 1):
+        t = index / bottom_samples
+        x = bottom_right - (bottom_right - bottom_left) * t
+        bottom_y = y + height + math.sin(t * math.pi * 3 + bottom_phase) * wave * 2.2
+        bottom.append([round(x), snap(bottom_y, 2)])
+
     return {
         "color": WATER_COLOR,
-        "points": [
-            *top,
-            [snap(x2 - side_inset, 2), snap(y + height, 2)],
-            [snap(x1 + side_inset, 2), snap(y + height, 2)],
-        ],
+        "points": [*top, *right_bank, *bottom, *reversed(left_bank)],
     }
 
 
@@ -676,3 +708,8 @@ def snap(value, size):
 
 def gaussian(value, center, width):
     return math.exp(-((value - center) ** 2) / (2 * width**2))
+
+
+def smoothstep(value):
+    value = max(0, min(1, value))
+    return value * value * (3 - 2 * value)
