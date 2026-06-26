@@ -1,4 +1,4 @@
-import { formatCost, modeLabel } from "./ui.js";
+import { formatCost, modeLabel } from "./ui.js?v=landscape9";
 
 export class Renderer {
   constructor(canvas, level) {
@@ -195,7 +195,7 @@ export class Renderer {
     line(ctx, preview.from.x, preview.from.y, preview.to.x, preview.to.y);
     ctx.restore();
 
-    const label = preview.valid ? (preview.deck ? "DECK" : "SUPPORT") : preview.reason.toUpperCase();
+    const label = preview.valid ? previewLabel(preview) : preview.reason.toUpperCase();
     ctx.save();
     ctx.fillStyle = preview.valid ? "#eeeeee" : "#ff6a6a";
     drawText(
@@ -207,6 +207,12 @@ export class Renderer {
       "center",
     );
     ctx.restore();
+
+    if (preview.valid) {
+      for (const point of preview.splitPoints ?? []) {
+        drawSnapNode(ctx, point);
+      }
+    }
 
     if (!preview.valid) {
       ctx.fillStyle = "#cc3030";
@@ -327,6 +333,12 @@ export class Renderer {
 
     const point = editor.pointer;
     ctx.save();
+    if (editor.hoverBeam) {
+      drawSnapNode(ctx, point);
+      ctx.restore();
+      return;
+    }
+
     ctx.strokeStyle = editor.selectedNode === null ? "#6d7378" : "#d0d0d0";
     ctx.lineWidth = 1;
     line(ctx, point.x - 7, point.y, point.x + 7, point.y);
@@ -344,6 +356,20 @@ export class Renderer {
 
 function buildBeamColor(beam) {
   return beam.deck ? "#d0d0d0" : "#8f9295";
+}
+
+function drawSnapNode(ctx, point) {
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 5.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#a5a247";
+  ctx.fill();
+}
+
+function previewLabel(preview) {
+  if (preview.split) {
+    return "SPLIT";
+  }
+  return preview.deck ? "DECK" : "SUPPORT";
 }
 
 function displaySeed(seed) {

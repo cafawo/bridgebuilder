@@ -1,8 +1,8 @@
-import { BridgeEditor } from "./editor.js";
-import { loadLevel } from "./levels.js";
-import { BridgeSimulation } from "./physics.js";
-import { Renderer } from "./renderer.js";
-import { pointerToCanvas } from "./ui.js";
+import { BridgeEditor } from "./editor.js?v=landscape9";
+import { loadLevel } from "./levels.js?v=landscape9";
+import { BridgeSimulation } from "./physics.js?v=landscape9";
+import { Renderer } from "./renderer.js?v=landscape9";
+import { pointerToCanvas } from "./ui.js?v=landscape9";
 
 const canvas = document.getElementById("game-canvas");
 const seedForm = document.getElementById("seed-form");

@@ -289,7 +289,6 @@ def generate_random_level(seed):
         "roadY": road_y,
         "deckTolerance": 26,
         "maxDeckSlope": 0.34,
-        "maxBeamLength": 155,
         "budget": budget,
         "costs": {"node": 90, "beamPerPixel": 1.0},
         "water": water,

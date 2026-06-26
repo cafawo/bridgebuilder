@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.test import SimpleTestCase
 from django.urls import reverse
 
@@ -17,7 +19,7 @@ class GameViewTests(SimpleTestCase):
         self.assertContains(response, 'id="seed-input"', html=False)
         self.assertContains(response, "data-random-level-url", html=False)
         self.assertContains(response, "game/js/main.js")
-        self.assertContains(response, "?v=landscape4")
+        self.assertContains(response, "?v=landscape9")
 
     def test_seeded_level_endpoint_generates_superformula_level(self):
         response = self.client.get(reverse("game:random-level"), {"seed": "test-seed"})
@@ -63,6 +65,7 @@ class ProceduralLevelTests(SimpleTestCase):
         self.assertGreaterEqual(len(data["waterBodies"]), 1)
         self.assertGreaterEqual(len(data["backdrop"]["layers"]), 1)
         self.assertGreaterEqual(len(data["details"]["strata"]), 4)
+        self.assertNotIn("maxBeamLength", data)
 
     def test_generated_level_is_deterministic_for_same_seed(self):
         self.assertEqual(generate_random_level("same-seed"), generate_random_level("same-seed"))
@@ -182,6 +185,34 @@ class ProceduralLevelTests(SimpleTestCase):
         self.assertTrue(
             any(has_central_ridge_above_water(data) for data in split_examples)
         )
+
+    def test_editor_allows_long_beams_and_can_split_existing_beams(self):
+        source = Path("game/static/game/js/editor.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("maxBeamLength", source)
+        self.assertNotIn("Beam too long", source)
+        self.assertIn("splitBeam", source)
+        self.assertIn("applyBeamPathPlan", source)
+        self.assertIn("splitBeamsContainingNode", source)
+        self.assertIn("segmentIntersection", source)
+        self.assertIn("closestPointOnSegment", source)
+        self.assertIn("splitPoints", source)
+
+    def test_renderer_marks_beam_snap_points_like_anchor_nodes(self):
+        source = Path("game/static/game/js/renderer.js").read_text(encoding="utf-8")
+
+        self.assertIn("drawSnapNode", source)
+        self.assertIn("#a5a247", source)
+
+    def test_javascript_module_imports_are_cache_busted(self):
+        main_source = Path("game/static/game/js/main.js").read_text(encoding="utf-8")
+        editor_source = Path("game/static/game/js/editor.js").read_text(encoding="utf-8")
+        renderer_source = Path("game/static/game/js/renderer.js").read_text(encoding="utf-8")
+
+        self.assertIn("./editor.js?v=landscape9", main_source)
+        self.assertIn("./renderer.js?v=landscape9", main_source)
+        self.assertIn("./ui.js?v=landscape9", editor_source)
+        self.assertIn("./ui.js?v=landscape9", renderer_source)
 
 
 def has_central_ridge_above_water(data):
