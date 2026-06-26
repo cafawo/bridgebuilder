@@ -1,11 +1,10 @@
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "bridgebuilder_site.settings"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["bridgebuilder_site", "game", "tests"]
+src = ["tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

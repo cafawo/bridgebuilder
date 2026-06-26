@@ -1,11 +1,10 @@
-{% load static %}
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bridge Builder</title>
-    <link rel="stylesheet" href="{% static 'game/css/style.css' %}?v=landscape10">
+    <link rel="stylesheet" href="static/game/css/style.css?v=landscape10">
   </head>
   <body>
     <main class="game-shell">
@@ -23,9 +22,8 @@
         height="700"
         tabindex="0"
         aria-label="Bridge Builder game"
-        data-random-level-url="{% url 'game:random-level' %}"
       ></canvas>
     </main>
-    <script type="module" src="{% static 'game/js/main.js' %}?v=landscape10"></script>
+    <script type="module" src="static/game/js/main.js?v=landscape10"></script>
   </body>
 </html>

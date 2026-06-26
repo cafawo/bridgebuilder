@@ -5,7 +5,5 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-      - "Django>=5.2,<6.1"
       - pytest
-      - pytest-django
       - ruff

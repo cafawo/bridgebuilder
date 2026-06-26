@@ -1,5 +1,5 @@
 import { BridgeEditor } from "./editor.js?v=landscape10";
-import { loadLevel } from "./levels.js?v=landscape10";
+import { loadLevel, normalizeSeed } from "./levels.js?v=landscape10";
 import { BridgeSimulation } from "./physics.js?v=landscape10";
 import { Renderer } from "./renderer.js?v=landscape10";
 import { pointerToCanvas } from "./ui.js?v=landscape10";
@@ -52,7 +52,7 @@ async function loadSeed(seed) {
   const token = (loadToken += 1);
   setSystemMessage("LOADING");
   seedInput.value = normalizedSeed;
-  const loadedLevel = await loadLevel(levelUrl(normalizedSeed));
+  const loadedLevel = loadLevel(normalizedSeed);
 
   if (token !== loadToken) {
     return;
@@ -60,6 +60,7 @@ async function loadSeed(seed) {
 
   currentSeed = loadedLevel.seed || normalizedSeed;
   seedInput.value = currentSeed;
+  updateSeedInLocation(currentSeed);
   level = loadedLevel;
   editor = new BridgeEditor(level);
   simulation = null;
@@ -203,18 +204,14 @@ function resetLevel() {
   setSystemMessage("RESET");
 }
 
-function levelUrl(seed) {
-  const url = new URL(canvas.dataset.randomLevelUrl, window.location.href);
-  url.searchParams.set("seed", seed);
-  return url.toString();
-}
-
-function normalizeSeed(seed) {
-  return seed.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 48) || randomSeed();
-}
-
 function seedFromLocation() {
   return new URLSearchParams(window.location.search).get("seed") || "";
+}
+
+function updateSeedInLocation(seed) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("seed", seed);
+  window.history.replaceState(null, "", url);
 }
 
 function randomSeed() {

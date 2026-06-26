@@ -1,15 +1,9 @@
-export async function loadLevel(url) {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
+import { generateRandomLevel, normalizeSeed } from "./generator.js?v=landscape10";
 
-  if (!response.ok) {
-    throw new Error(`Could not load level: ${response.status}`);
-  }
+export { normalizeSeed };
 
-  const level = await response.json();
+export function loadLevel(seed) {
+  const level = generateRandomLevel(seed);
   validateLevel(level);
   return level;
 }
