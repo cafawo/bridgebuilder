@@ -7,6 +7,11 @@ Canvas.
 
 The visual reference screenshots are stored in `screenshots/`.
 
+The game creates every map from a seed. Fresh page loads generate a new random seed, and entering
+the same seed in the seed field recreates the same bridge problem. The procedural terrain uses a 2D
+Superformula-derived curve to vary cliffs and riverbeds:
+https://en.wikipedia.org/wiki/Superformula
+
 ## Setup
 
 Create the conda environment:
@@ -44,10 +49,18 @@ http://127.0.0.1:8000/
 ## Controls
 
 - Left click: select/place nodes and create beams
-- Right click: delete the nearest node or beam
+- Right click: cancel active beam building; when nothing is selected, delete the nearest node or beam
+- Delete/Backspace: cancel active beam building; otherwise delete the hovered node or beam
+- Z or Ctrl+Z: undo the last build/delete action
 - Space: toggle build/test simulation mode
 - R: reset the level
-- Esc: pause/unpause while testing
+- Esc: cancel active beam building; pause/unpause while testing
+- G: generate and load a new random seed
+- Seed field: enter a seed and press Load to recreate that map
+
+Only beams close to the road height become driveable deck beams. Lower or steep beams act as
+support truss members, so the vehicle needs a real supported deck to cross.
+The canvas HUD shows the currently available actions for the active selection or hovered part.
 
 ## Tests and Lint
 
@@ -78,7 +91,6 @@ conda run -n bridgebuilder ruff check .
 |           |-- editor.js
 |           |-- levels.js
 |           `-- ui.js
-|-- levels/level_01.json
 |-- screenshots/
 `-- tests/
 ```

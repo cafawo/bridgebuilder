@@ -5,21 +5,27 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bridge Builder</title>
-    <link rel="stylesheet" href="{% static 'game/css/style.css' %}">
+    <link rel="stylesheet" href="{% static 'game/css/style.css' %}?v=landscape2">
   </head>
   <body>
     <main class="game-shell">
+      <form class="seed-panel" id="seed-form">
+        <label class="seed-field">
+          <span>Seed</span>
+          <input id="seed-input" name="seed" type="text" autocomplete="off" spellcheck="false">
+        </label>
+        <button type="submit">Load</button>
+        <button type="button" id="random-seed-button">Random</button>
+      </form>
       <canvas
         id="game-canvas"
-        width="900"
-        height="560"
+        width="1100"
+        height="650"
         tabindex="0"
         aria-label="Bridge Builder game"
-        data-level-url="{% url 'game:level-json' 'level_01' %}"
-        data-level-list-url="{% url 'game:level-index' %}"
-        data-random-level-url="{% url 'game:random-level' 'seed' %}"
+        data-random-level-url="{% url 'game:random-level' %}"
       ></canvas>
     </main>
-    <script type="module" src="{% static 'game/js/main.js' %}"></script>
+    <script type="module" src="{% static 'game/js/main.js' %}?v=landscape2"></script>
   </body>
 </html>

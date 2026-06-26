@@ -20,6 +20,7 @@ export class BridgeEditor {
     this.pointer = null;
     this.hoverNode = null;
     this.hoverBeam = null;
+    this.history = [];
     this.message = "";
     this.messageUntil = 0;
   }
@@ -43,6 +44,44 @@ export class BridgeEditor {
 
   currentMessage(now = performance.now()) {
     return now < this.messageUntil ? this.message : "";
+  }
+
+  helpText() {
+    const undo = this.undoHint();
+    if (this.selectedNode !== null) {
+      const selected = this.nodes[this.selectedNode];
+      const kind = selected.fixed ? "anchor" : "node";
+      return {
+        primary: `Building from ${kind}: LMB target places beam`,
+        secondary: `RMB, Esc, or Delete cancels | R resets | Space tests${undo}`,
+      };
+    }
+
+    if (this.hoverNode) {
+      const node = this.nodes[this.hoverNode.index];
+      return {
+        primary: node.fixed ? "LMB anchor starts beam" : "LMB node starts beam",
+        secondary: node.fixed
+          ? `Anchors are fixed | R resets | Space tests${undo}`
+          : `RMB or Delete removes node | R resets | Space tests${undo}`,
+      };
+    }
+
+    if (this.hoverBeam) {
+      return {
+        primary: "LMB grid places a new node",
+        secondary: `RMB or Delete removes hovered beam | Space tests${undo}`,
+      };
+    }
+
+    return {
+      primary: "LMB grid places node | LMB dot starts beam",
+      secondary: `RMB deletes hovered part | Space tests | G random seed${undo}`,
+    };
+  }
+
+  undoHint() {
+    return this.history.length > 0 ? " | Z undo" : "";
   }
 
   setPointer(rawPoint) {
@@ -71,18 +110,32 @@ export class BridgeEditor {
       : false;
     const beamCost = length * this.level.costs.beamPerPixel;
     const cost = this.hoverNode ? beamCost : this.level.costs.node + beamCost;
+    const reason = this.previewReason(length, existing, cost);
 
     return {
       from,
       to: hover,
       length,
       deck: this.isDeckBeam(from, hover),
-      valid:
-        length >= 8 &&
-        length <= this.level.maxBeamLength &&
-        !existing &&
-        this.totalCost() + cost <= this.level.budget,
+      valid: reason === "",
+      reason,
     };
+  }
+
+  previewReason(length, existing, cost) {
+    if (length < 8) {
+      return "too short";
+    }
+    if (length > this.level.maxBeamLength) {
+      return "too long";
+    }
+    if (existing) {
+      return "already built";
+    }
+    if (this.totalCost() + cost > this.level.budget) {
+      return "over budget";
+    }
+    return "";
   }
 
   handleLeftClick(rawPoint) {
@@ -98,6 +151,11 @@ export class BridgeEditor {
   }
 
   handleRightClick(point) {
+    if (this.selectedNode !== null) {
+      this.cancelSelection();
+      return;
+    }
+
     const nearestNode = this.findNode(point, 9);
     const nearestBeam = this.findBeam(point);
 
@@ -107,22 +165,46 @@ export class BridgeEditor {
     }
 
     if (nearestBeam) {
-      this.beams.splice(nearestBeam.index, 1);
-      this.setMessage("Beam deleted");
+      this.deleteBeam(nearestBeam.index);
       return;
     }
 
     this.setMessage("Nothing selected");
   }
 
+  deleteHovered() {
+    if (this.selectedNode !== null) {
+      this.cancelSelection();
+      return;
+    }
+
+    if (this.hoverNode) {
+      this.deleteNode(this.hoverNode.index);
+      return;
+    }
+
+    if (this.hoverBeam) {
+      this.deleteBeam(this.hoverBeam.index);
+      return;
+    }
+
+    this.setMessage("Nothing selected");
+  }
+
+  cancelSelection() {
+    this.selectedNode = null;
+    this.setMessage("Build cancelled");
+  }
+
   handleNodeClick(index) {
     if (this.selectedNode === null) {
       this.selectedNode = index;
+      this.setMessage("Choose beam end");
       return;
     }
 
     if (this.selectedNode === index) {
-      this.selectedNode = null;
+      this.setMessage("Right click cancels");
       return;
     }
 
@@ -149,6 +231,7 @@ export class BridgeEditor {
       return;
     }
 
+    this.remember();
     const newIndex = this.nodes.length;
     this.nodes.push({
       x: point.x,
@@ -161,6 +244,7 @@ export class BridgeEditor {
     }
 
     this.selectedNode = newIndex;
+    this.setMessage("Node placed");
   }
 
   addBeam(a, b) {
@@ -180,6 +264,7 @@ export class BridgeEditor {
       return false;
     }
 
+    this.remember();
     this.beams.push(this.createBeam(a, b));
     return true;
   }
@@ -226,12 +311,14 @@ export class BridgeEditor {
       return;
     }
 
+    this.remember();
     this.nodes.splice(index, 1);
     this.beams = this.beams
       .filter((beam) => beam.a !== index && beam.b !== index)
       .map((beam) => ({
         a: beam.a > index ? beam.a - 1 : beam.a,
         b: beam.b > index ? beam.b - 1 : beam.b,
+        deck: beam.deck,
       }));
 
     if (this.selectedNode === index) {
@@ -241,6 +328,37 @@ export class BridgeEditor {
     }
 
     this.setMessage("Node deleted");
+  }
+
+  deleteBeam(index) {
+    this.remember();
+    this.beams.splice(index, 1);
+    this.setMessage("Beam deleted");
+  }
+
+  undo() {
+    const previous = this.history.pop();
+    if (!previous) {
+      this.setMessage("Nothing to undo");
+      return;
+    }
+
+    this.nodes = previous.nodes;
+    this.beams = previous.beams;
+    this.selectedNode = previous.selectedNode;
+    this.setMessage("Undo");
+  }
+
+  remember() {
+    this.history.push({
+      nodes: this.nodes.map((node) => ({ ...node })),
+      beams: this.beams.map((beam) => ({ ...beam })),
+      selectedNode: this.selectedNode,
+    });
+
+    if (this.history.length > 50) {
+      this.history.shift();
+    }
   }
 
   findNode(point, radius = NODE_RADIUS) {

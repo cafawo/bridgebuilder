@@ -13,7 +13,7 @@ export class Renderer {
     this.canvas.height = level.canvas.height;
   }
 
-  render({ mode, editor, simulation, paused, systemMessage, levelIndex, levelCount }) {
+  render({ mode, editor, simulation, paused, systemMessage, seed }) {
     const ctx = this.context;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.drawBackground(ctx);
@@ -28,6 +28,7 @@ export class Renderer {
     } else {
       this.drawBeams(ctx, editor.nodes, editor.beams, false);
       this.drawPreview(ctx, editor.previewBeam());
+      this.drawSnapCursor(ctx, editor);
       this.drawNodes(ctx, editor.nodes, editor.selectedNode, editor.hoverNode);
       this.drawVehicle(ctx, {
         x: this.level.start.x,
@@ -37,8 +38,7 @@ export class Renderer {
     }
 
     this.drawGoal(ctx);
-    this.drawUi(ctx, { mode, editor, simulation, paused, systemMessage, levelIndex, levelCount });
-    this.drawFrame(ctx);
+    this.drawUi(ctx, { mode, editor, simulation, paused, systemMessage, seed });
   }
 
   drawBackground(ctx) {
@@ -65,9 +65,6 @@ export class Renderer {
     const water = this.level.water;
     ctx.fillStyle = water.color || "#11106d";
     ctx.fillRect(water.x, water.y, water.width, water.height);
-    ctx.strokeStyle = "#1b1a83";
-    ctx.lineWidth = 2;
-    line(ctx, water.x, water.y, water.x + water.width, water.y);
   }
 
   drawTerrain(ctx) {
@@ -83,9 +80,6 @@ export class Renderer {
       ctx.closePath();
       ctx.fillStyle = terrain.color || "#303335";
       ctx.fill();
-      ctx.strokeStyle = "#1d2022";
-      ctx.lineWidth = 2;
-      ctx.stroke();
     }
   }
 
@@ -135,6 +129,19 @@ export class Renderer {
     line(ctx, preview.from.x, preview.from.y, preview.to.x, preview.to.y);
     ctx.restore();
 
+    const label = preview.valid ? (preview.deck ? "DECK" : "SUPPORT") : preview.reason.toUpperCase();
+    ctx.save();
+    ctx.fillStyle = preview.valid ? "#eeeeee" : "#ff6a6a";
+    drawText(
+      ctx,
+      label,
+      (preview.from.x + preview.to.x) / 2,
+      (preview.from.y + preview.to.y) / 2 - 18,
+      13,
+      "center",
+    );
+    ctx.restore();
+
     if (!preview.valid) {
       ctx.fillStyle = "#cc3030";
       ctx.beginPath();
@@ -162,12 +169,12 @@ export class Renderer {
   drawVehicle(ctx, vehicle) {
     const config = this.level.vehicle;
     const left = -config.width / 2;
-    const top = -config.height - config.wheelRadius;
-    const wheelY = -config.wheelRadius;
+    const top = -config.height / 2;
+    const wheelY = config.height / 2 + config.wheelRadius;
     const wheelInset = Math.max(8, config.width * 0.27);
 
     ctx.save();
-    ctx.translate(vehicle.x, vehicle.y + config.height + config.wheelRadius);
+    ctx.translate(vehicle.x, vehicle.y + config.height / 2);
     ctx.rotate(vehicle.angle || 0);
 
     ctx.fillStyle = "#d5d5d5";
@@ -201,14 +208,14 @@ export class Renderer {
     ctx.fillRect(this.level.goal.x, this.level.goal.y - 28, 20, 12);
   }
 
-  drawUi(ctx, { mode, editor, simulation, paused, systemMessage, levelIndex, levelCount }) {
+  drawUi(ctx, { mode, editor, simulation, paused, systemMessage, seed }) {
     ctx.save();
     ctx.textBaseline = "top";
     ctx.fillStyle = "#dddddd";
     drawText(ctx, modeLabel(mode, paused), 8, 5, 20, "left");
     drawText(ctx, this.centerLabel(mode, simulation), this.canvas.width / 2, 5, 22, "center");
 
-    const levelLabel = this.level.procedural ? "RANDOM" : `MAP ${levelIndex + 1}/${levelCount}`;
+    const levelLabel = `SEED ${displaySeed(seed)}`;
     drawText(ctx, levelLabel, this.canvas.width - 8, 5, 18, "right");
 
     if (mode === "simulation" && simulation) {
@@ -219,12 +226,45 @@ export class Renderer {
       drawText(ctx, `Budget: ${formatCost(this.level.budget)}`, 8, this.canvas.height - 52, 18, "left");
       drawText(ctx, `Weight: ${formatCost(this.level.vehicle.load)}`, 8, this.canvas.height - 28, 18, "left");
       drawText(ctx, "TEST", this.canvas.width - 8, this.canvas.height - 28, 18, "right");
+      this.drawHelp(ctx, editor.helpText());
     }
 
     const message = systemMessage || editor.currentMessage();
     if (message) {
-      drawText(ctx, message, this.canvas.width / 2, this.canvas.height - 34, 20, "center");
+      const y = mode === "build" ? this.canvas.height - 92 : this.canvas.height - 34;
+      drawText(ctx, message, this.canvas.width / 2, y, 20, "center");
     }
+    ctx.restore();
+  }
+
+  drawHelp(ctx, help) {
+    ctx.save();
+    ctx.fillStyle = "rgba(12, 14, 16, 0.64)";
+    ctx.strokeStyle = "#3b4045";
+    ctx.lineWidth = 1;
+    const width = 620;
+    const height = 46;
+    const x = (this.canvas.width - width) / 2;
+    const y = 38;
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+    ctx.fillStyle = "#e0e0e0";
+    drawText(ctx, help.primary, this.canvas.width / 2, y + 5, 14, "center");
+    drawText(ctx, help.secondary, this.canvas.width / 2, y + 24, 13, "center");
+    ctx.restore();
+  }
+
+  drawSnapCursor(ctx, editor) {
+    if (!editor.pointer) {
+      return;
+    }
+
+    const point = editor.pointer;
+    ctx.save();
+    ctx.strokeStyle = editor.selectedNode === null ? "#6d7378" : "#d0d0d0";
+    ctx.lineWidth = 1;
+    line(ctx, point.x - 7, point.y, point.x + 7, point.y);
+    line(ctx, point.x, point.y - 7, point.x, point.y + 7);
     ctx.restore();
   }
 
@@ -234,16 +274,17 @@ export class Renderer {
     }
     return this.level.name;
   }
-
-  drawFrame(ctx) {
-    ctx.strokeStyle = "#090a0b";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, this.canvas.width - 2, this.canvas.height - 2);
-  }
 }
 
 function buildBeamColor(beam) {
   return beam.deck ? "#d0d0d0" : "#8f9295";
+}
+
+function displaySeed(seed) {
+  if (!seed || seed.length <= 24) {
+    return seed || "";
+  }
+  return `${seed.slice(0, 21)}...`;
 }
 
 function drawText(ctx, text, x, y, size, align) {

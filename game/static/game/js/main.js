@@ -1,14 +1,16 @@
 import { BridgeEditor } from "./editor.js";
-import { loadLevel, loadLevelCatalog } from "./levels.js";
+import { loadLevel } from "./levels.js";
 import { BridgeSimulation } from "./physics.js";
 import { Renderer } from "./renderer.js";
 import { pointerToCanvas } from "./ui.js";
 
 const canvas = document.getElementById("game-canvas");
+const seedForm = document.getElementById("seed-form");
+const seedInput = document.getElementById("seed-input");
+const randomSeedButton = document.getElementById("random-seed-button");
 
 let level = null;
-let levelCatalog = [];
-let currentLevelIndex = 0;
+let currentSeed = "";
 let editor = null;
 let renderer = null;
 let simulation = null;
@@ -21,12 +23,23 @@ let inputBound = false;
 let loadToken = 0;
 
 bootstrap();
+window.bridgebuilderDebug = {
+  state: () => ({
+    mode,
+    selectedNode: editor?.selectedNode ?? null,
+    help: editor?.helpText() ?? null,
+    seed: currentSeed,
+    nodeCount: editor?.nodes.length ?? 0,
+    beamCount: editor?.beams.length ?? 0,
+    canUndo: (editor?.history.length ?? 0) > 0,
+    generator: level?.generator?.name ?? null,
+  }),
+};
 
 async function bootstrap() {
   try {
-    levelCatalog = await loadLevelCatalog(canvas.dataset.levelListUrl);
-    await loadLevelFromCatalog(0);
     bindInput();
+    await loadSeed(randomSeed());
     canvas.focus();
     requestAnimationFrame(loop);
   } catch (error) {
@@ -34,29 +47,20 @@ async function bootstrap() {
   }
 }
 
-async function loadLevelFromCatalog(index) {
-  const nextIndex = (index + levelCatalog.length) % levelCatalog.length;
-  const entry = levelCatalog[nextIndex];
-  await loadLevelUrl(entry.url, nextIndex);
-}
-
-async function loadRandomLevel() {
-  const seed = Date.now().toString(36).slice(-7);
-  const url = canvas.dataset.randomLevelUrl.replace("seed", encodeURIComponent(seed));
-  await loadLevelUrl(url, currentLevelIndex);
-}
-
-async function loadLevelUrl(url, catalogIndex) {
+async function loadSeed(seed) {
+  const normalizedSeed = normalizeSeed(seed);
   const token = (loadToken += 1);
   setSystemMessage("LOADING");
-  const loadedLevel = await loadLevel(url);
+  seedInput.value = normalizedSeed;
+  const loadedLevel = await loadLevel(levelUrl(normalizedSeed));
 
   if (token !== loadToken) {
     return;
   }
 
+  currentSeed = loadedLevel.seed || normalizedSeed;
+  seedInput.value = currentSeed;
   level = loadedLevel;
-  currentLevelIndex = catalogIndex;
   editor = new BridgeEditor(level);
   simulation = null;
   mode = "build";
@@ -68,7 +72,8 @@ async function loadLevelUrl(url, catalogIndex) {
     renderer = new Renderer(canvas, level);
   }
 
-  setSystemMessage(level.procedural ? "RANDOM MAP" : level.name.toUpperCase());
+  systemMessage = "";
+  systemMessageUntil = 0;
 }
 
 function bindInput() {
@@ -76,6 +81,16 @@ function bindInput() {
     return;
   }
   inputBound = true;
+
+  seedForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void loadSafely(loadSeed(seedInput.value || randomSeed()));
+    canvas.focus();
+  });
+  randomSeedButton.addEventListener("click", () => {
+    void loadSafely(loadSeed(randomSeed()));
+    canvas.focus();
+  });
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   canvas.addEventListener("mousemove", (event) => {
@@ -106,26 +121,40 @@ function bindInput() {
   });
 
   window.addEventListener("keydown", (event) => {
+    if (event.target === seedInput) {
+      return;
+    }
+
     if (event.code === "Space") {
       event.preventDefault();
       toggleSimulation();
     } else if (event.key.toLowerCase() === "r") {
       resetLevel();
-    } else if (event.key.toLowerCase() === "n") {
-      void loadLevelFromCatalog(currentLevelIndex + 1);
-    } else if (event.key.toLowerCase() === "p") {
-      void loadLevelFromCatalog(currentLevelIndex - 1);
     } else if (event.key.toLowerCase() === "g") {
-      void loadRandomLevel();
-    } else if (event.key >= "1" && event.key <= "9") {
-      const index = Number.parseInt(event.key, 10) - 1;
-      if (index < levelCatalog.length) {
-        void loadLevelFromCatalog(index);
+      void loadSafely(loadSeed(randomSeed()));
+    } else if (event.key === "Escape") {
+      if (mode === "build" && editor?.selectedNode !== null) {
+        editor.cancelSelection();
+      } else if (mode === "simulation") {
+        paused = !paused;
       }
-    } else if (event.key === "Escape" && mode === "simulation") {
-      paused = !paused;
+    } else if ((event.key === "Delete" || event.key === "Backspace") && mode === "build") {
+      event.preventDefault();
+      editor.deleteHovered();
+    } else if (event.key.toLowerCase() === "z" && mode === "build") {
+      event.preventDefault();
+      editor.undo();
     }
   });
+}
+
+async function loadSafely(promise) {
+  try {
+    await promise;
+  } catch (error) {
+    console.error(error);
+    setSystemMessage("LOAD FAILED");
+  }
 }
 
 function loop(now) {
@@ -146,8 +175,7 @@ function loop(now) {
     simulation,
     paused,
     systemMessage,
-    levelIndex: currentLevelIndex,
-    levelCount: levelCatalog.length,
+    seed: currentSeed,
   });
   requestAnimationFrame(loop);
 }
@@ -173,6 +201,23 @@ function resetLevel() {
   mode = "build";
   paused = false;
   setSystemMessage("RESET");
+}
+
+function levelUrl(seed) {
+  const url = new URL(canvas.dataset.randomLevelUrl, window.location.href);
+  url.searchParams.set("seed", seed);
+  return url.toString();
+}
+
+function normalizeSeed(seed) {
+  return seed.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 48) || randomSeed();
+}
+
+function randomSeed() {
+  const alphabet = "23456789abcdefghjkmnpqrstuvwxyz";
+  const bytes = new Uint8Array(10);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
 function setSystemMessage(message) {
