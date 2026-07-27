@@ -1,3 +1,4 @@
+import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,15 @@ RUNTIME_MODULES = {
     "physics.js",
     "renderer.js",
     "ui.js",
+}
+SHOWCASE_IMAGES = {
+    "alpine-gorge.png",
+    "canyon.png",
+    "highlands.png",
+    "marshland.png",
+    "riverlands.png",
+    "split-valley.png",
+    "swampland.png",
 }
 
 
@@ -68,3 +78,23 @@ def test_no_node_or_bundler_metadata_is_present():
         "webpack.config.js",
     ]:
         assert not (ROOT / path).exists()
+
+
+def test_documented_screenshot_gallery_is_complete():
+    gallery = ROOT / "screenshots" / "procedural" / "showcase"
+    images = {path.name: path for path in gallery.glob("*.png")}
+    readme = read("README.md")
+
+    assert set(images) == SHOWCASE_IMAGES
+    for name, path in images.items():
+        header = path.read_bytes()[:24]
+        assert header[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", header[16:24]) == (1320, 900)
+        assert f"screenshots/procedural/showcase/{name}" in readme
+
+    for reference in [
+        "screenshots/bbg2-2.gif",
+        "screenshots/bridgebuilder-screenshot.avif",
+        "screenshots/bridgebuilder.jpg",
+    ]:
+        assert (ROOT / reference).is_file()

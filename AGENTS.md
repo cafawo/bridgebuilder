@@ -65,5 +65,10 @@ git diff --check
   `tests/app_runner.html`; pytest only serves and drives them.
 - Add deterministic regression coverage for gameplay changes and real-app
   coverage for controls, persistence, focus, touch, or accessibility changes.
-- Do not commit generated caches, temporary profiles, obsolete screenshots, or
-  unreferenced artifacts.
+- Preserve the documented gallery and original references in `screenshots/`.
+  Recapture the gallery when the UI or generator changes; do not delete
+  documented or historical images as general cleanup without explicit approval.
+- Do not create repository-local agent scratch directories such as `.agents`;
+  use the system temporary directory and remove task-specific artifacts.
+- Do not commit generated caches, temporary browser profiles, or unreferenced
+  artifacts.

@@ -12,8 +12,8 @@ available for unrestricted building.
 
 This repository is designed to publish directly from `main` at `/`, matching GitHub Pages'
 "Deploy from a branch" root configuration.
-There is no build step: GitHub Pages serves `index.html`, `.nojekyll`, and `static/`
-directly from the repository.
+There is no build step: GitHub Pages serves `index.html`, `.nojekyll`, `static/`, and
+`screenshots/` directly from the repository.
 
 Open the published project page:
 
@@ -33,10 +33,52 @@ link.
 
 Deployment checklist:
 
-- Commit the root `index.html`, `.nojekyll`, `static/`, and docs.
+- Commit the root `index.html`, `.nojekyll`, `static/`, `screenshots/`, and docs.
 - Push to `main`.
 - Wait for the GitHub Pages publish step to finish.
 - Open the project page and verify a seed URL renders the canvas.
+
+## Procedural Challenge Gallery
+
+These are current full-page captures from Challenge mode, not concept art. Together they show all
+seven cosmetic biomes and all four mechanical archetypes while keeping the renderer to one Canvas
+and simple primitives. The named seeds can be loaded directly with `?seed=...`.
+
+<table>
+  <tr>
+    <th>Canyon<br><code>gallery-34</code></th>
+    <th>Highlands<br><code>gallery-1</code></th>
+    <th>Alpine Gorge<br><code>gallery-0</code></th>
+  </tr>
+  <tr>
+    <td><img src="screenshots/procedural/showcase/canyon.png" alt="Sawtooth Ravine canyon biome with an asymmetric shelf gorge challenge" width="400"></td>
+    <td><img src="screenshots/procedural/showcase/highlands.png" alt="Highland Cut biome with an open bank span challenge" width="400"></td>
+    <td><img src="screenshots/procedural/showcase/alpine-gorge.png" alt="Deep Mountain Pass biome with a twin-channel island challenge" width="400"></td>
+  </tr>
+  <tr>
+    <th>Split Valley<br><code>gallery-8</code></th>
+    <th>Riverlands<br><code>gallery-10</code></th>
+    <th>Marshland<br><code>gallery-2</code></th>
+  </tr>
+  <tr>
+    <td><img src="screenshots/procedural/showcase/split-valley.png" alt="Twin Valley biome with an open bank span challenge" width="400"></td>
+    <td><img src="screenshots/procedural/showcase/riverlands.png" alt="Lowland River biome with a fixed central pier challenge" width="400"></td>
+    <td><img src="screenshots/procedural/showcase/marshland.png" alt="Marsh Causeway biome with an open bank span challenge" width="400"></td>
+  </tr>
+  <tr>
+    <th>Swampland<br><code>gallery-5</code></th>
+    <th></th>
+    <th></th>
+  </tr>
+  <tr>
+    <td><img src="screenshots/procedural/showcase/swampland.png" alt="Swamp Crossing biome with a fixed central pier challenge" width="400"></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>
+
+The matching full-resolution captures are retained in `screenshots/procedural/`. The original
+reference screenshots are also preserved in `screenshots/`.
 
 ## Procedural Generation
 
@@ -174,6 +216,12 @@ When deployed module behavior changes, keep the `?v=challenge2` browser cache ta
 |           |-- physics.js
 |           |-- renderer.js
 |           `-- ui.js
+|-- screenshots/
+|   |-- bridgebuilder.jpg
+|   |-- bridgebuilder-screenshot.avif
+|   |-- bbg2-2.gif
+|   `-- procedural/
+|       `-- showcase/
 `-- tests/
     |-- app_runner.html
     |-- browser_runner.html
