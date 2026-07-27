@@ -4,26 +4,102 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bridge Builder</title>
-    <link rel="stylesheet" href="static/game/css/style.css?v=landscape10">
+    <link rel="stylesheet" href="static/game/css/style.css?v=challenge2">
   </head>
   <body>
     <main class="game-shell">
-      <form class="seed-panel" id="seed-form">
-        <label class="seed-field">
-          <span>Seed</span>
-          <input id="seed-input" name="seed" type="text" autocomplete="off" spellcheck="false">
-        </label>
-        <button type="submit">Load</button>
-        <button type="button" id="random-seed-button">Random</button>
-      </form>
-      <canvas
-        id="game-canvas"
-        width="1240"
-        height="700"
-        tabindex="0"
-        aria-label="Bridge Builder game"
-      ></canvas>
+      <header class="control-deck" aria-label="Game controls">
+        <form class="seed-panel" id="seed-form">
+          <label class="seed-field">
+            <span>Seed</span>
+            <input id="seed-input" name="seed" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <button type="submit">Load</button>
+          <button type="button" id="random-seed-button">Random</button>
+          <label class="mode-field" for="mode-select">
+            <span>Mode</span>
+            <select id="mode-select" name="mode">
+              <option value="challenge" selected>Challenge</option>
+              <option value="sandbox">Sandbox</option>
+            </select>
+          </label>
+        </form>
+
+        <div class="game-toolbar" role="toolbar" aria-label="Bridge tools">
+          <div class="tool-group" role="group" aria-label="Build and test">
+            <button type="button" id="test-button" class="primary-action" aria-pressed="false">
+              Test
+            </button>
+            <button type="button" id="edit-button" aria-pressed="true">Edit</button>
+            <button type="button" id="pause-button" aria-pressed="false" disabled>Pause</button>
+          </div>
+
+          <div class="tool-group speed-group" role="group" aria-label="Test speed">
+            <span class="group-label" aria-hidden="true">Speed</span>
+            <button type="button" data-speed="1" aria-pressed="true">1×</button>
+            <button type="button" data-speed="2" aria-pressed="false">2×</button>
+            <button type="button" data-speed="4" aria-pressed="false">4×</button>
+          </div>
+
+          <div class="tool-group" role="group" aria-label="Edit history">
+            <button type="button" id="undo-button" disabled>Undo</button>
+            <button type="button" id="redo-button" disabled>Redo</button>
+            <button type="button" id="reset-button">Reset</button>
+            <button type="button" id="delete-button">Delete</button>
+          </div>
+
+          <button type="button" id="capacity-button" class="capacity-action" disabled>
+            Capacity Test
+          </button>
+        </div>
+      </header>
+
+      <section class="playfield" aria-label="Bridge site">
+        <canvas
+          id="game-canvas"
+          width="1240"
+          height="700"
+          tabindex="0"
+          aria-label="Bridge construction canvas. Use the pointer to place nodes and beams."
+          aria-describedby="canvas-instructions live-status"
+        >
+          Bridge Builder needs a browser with HTML5 Canvas support.
+        </canvas>
+
+        <p class="visually-hidden" id="canvas-instructions">
+          In Edit mode, select a node and then its destination to build a beam. Use the toolbar
+          for testing, undo, redo, reset, and delete.
+        </p>
+
+        <div class="capacity-progress" id="capacity-progress" hidden role="status" aria-live="polite">
+          <progress id="capacity-progress-bar" max="1" value="0"></progress>
+          <span id="capacity-progress-label">Preparing capacity test…</span>
+        </div>
+
+        <section
+          class="result-panel"
+          id="result-panel"
+          aria-labelledby="result-title"
+          aria-describedby="result-summary"
+          tabindex="-1"
+          hidden
+        >
+          <p class="result-eyebrow">Crossing report</p>
+          <h1 id="result-title">Test complete</h1>
+          <p id="result-summary"></p>
+          <div class="result-actions">
+            <button type="button" id="retry-button">Retry</button>
+            <button type="button" id="improve-button" class="primary-action">Improve</button>
+            <button type="button" id="new-seed-button">New Seed</button>
+            <button type="button" id="share-button">Share</button>
+          </div>
+        </section>
+      </section>
+
+      <p class="live-status" id="live-status" role="status" aria-live="polite" aria-atomic="true">
+        Challenge ready. Build a bridge, then test its rated load.
+      </p>
     </main>
-    <script type="module" src="static/game/js/main.js?v=landscape10"></script>
+    <script type="module" src="static/game/js/main.js?v=challenge2"></script>
   </body>
 </html>

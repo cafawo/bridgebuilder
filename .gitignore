@@ -1,26 +1,16 @@
-# Python/tooling caches
+# Test and lint caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-.coverage
-htmlcov/
 
-# Virtual environments and local env files
+# Local environment files
 .env
 .envrc
 .venv/
-env/
-venv/
-
-# Local build/output scratch
-build/
-dist/
-cover/
 
 # Editor and OS files
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
-tempCodeRunnerFile.py

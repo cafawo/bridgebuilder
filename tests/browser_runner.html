@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Bridgebuilder browser checks</title>
+  </head>
+  <body data-test-status="running">
+    <h1>Bridgebuilder browser checks</h1>
+    <ol id="results"></ol>
+    <script type="module">
+      import {
+        BLUEPRINT_VERSION,
+        betterRecord,
+        challengeIdentity,
+        decodeBlueprint,
+        designFromLocationHash,
+        draftStorageKey,
+        encodeBlueprint,
+        hashForDesign,
+        loadStoredJson,
+        recordStorageKey,
+        storeJson,
+      } from "../static/game/js/blueprint.js";
+      import {
+        CapacitySearch,
+        runTrial,
+      } from "../static/game/js/capacity.js";
+      import { BridgeEditor } from "../static/game/js/editor.js";
+      import {
+        GENERATOR_VERSION,
+        generateRandomLevel,
+        generateReferenceBridge,
+      } from "../static/game/js/generator.js";
+      import {
+        BridgeSimulation,
+        PHYSICS_VERSION,
+        SIMULATION_DT,
+      } from "../static/game/js/physics.js";
+      import { validateLevel } from "../static/game/js/levels.js";
+
+      const results = document.getElementById("results");
+      const tests = [];
+
+      function test(name, callback) {
+        tests.push({ name, callback });
+      }
+
+      function assert(condition, message = "assertion failed") {
+        if (!condition) {
+          throw new Error(message);
+        }
+      }
+
+      function equal(actual, expected, message = "values differ") {
+        if (actual !== expected) {
+          throw new Error(`${message}: expected ${expected}, received ${actual}`);
+        }
+      }
+
+      function expectThrows(callback, message = "expected an exception") {
+        try {
+          callback();
+        } catch (error) {
+          return error;
+        }
+        throw new Error(message);
+      }
+
+      function encodeRawBlueprint(payload) {
+        const bytes = new TextEncoder().encode(JSON.stringify(payload));
+        let binary = "";
+        for (const byte of bytes) {
+          binary += String.fromCharCode(byte);
+        }
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      }
+
+      function editorFixture({
+        budget = 100000,
+        buildExclusions = [],
+        navigationClearances = [],
+      } = {}) {
+        const generated = generateRandomLevel("browser-editor-fixture");
+        return {
+          ...generated,
+          canvas: { width: 400, height: 300 },
+          roadY: 100,
+          budget,
+          anchors: [
+            { x: 100, y: 100 },
+            { x: 300, y: 100 },
+          ],
+          terrain: [],
+          waterBodies: [],
+          hazards: [],
+          buildExclusions,
+          navigationClearances,
+        };
+      }
+
+      function physicsFixture() {
+        const material = generateRandomLevel("browser-physics-material");
+        const roadY = 140;
+        const water = {
+          id: "fixture-water",
+          type: "water",
+          kind: "water",
+          surfaceY: 225,
+          points: [
+            [180, 225],
+            [460, 225],
+            [460, 360],
+            [180, 360],
+          ],
+        };
+        const level = {
+          ...material,
+          canvas: { width: 640, height: 360 },
+          roadY,
+          maxDeckSlope: 0.28,
+          groundSegments: [
+            { x1: 0, x2: 180, y: roadY, kind: "road" },
+            { x1: 460, x2: 640, y: roadY, kind: "road" },
+          ],
+          start: { x: 100, y: roadY - 25 },
+          goal: { x: 520, y: roadY },
+          vehicle: { width: 50, height: 18, wheelRadius: 7, speed: 70 },
+          challenge: {
+            ...material.challenge,
+            ratedLoad: 4000,
+            tiers: [1, 1.5, 2],
+          },
+          waterBodies: [water],
+          hazards: [water],
+        };
+        const nodes = [
+          { x: 180, y: roadY, fixed: true },
+          { x: 250, y: roadY, fixed: false },
+          { x: 320, y: roadY, fixed: false },
+          { x: 390, y: roadY, fixed: false },
+          { x: 460, y: roadY, fixed: true },
+          { x: 215, y: 200, fixed: false },
+          { x: 285, y: 200, fixed: false },
+          { x: 355, y: 200, fixed: false },
+          { x: 425, y: 200, fixed: false },
+        ];
+        const deck = [
+          { a: 0, b: 1, deck: true },
+          { a: 1, b: 2, deck: true },
+          { a: 2, b: 3, deck: true },
+          { a: 3, b: 4, deck: true },
+        ];
+        const supports = [
+          { a: 0, b: 5, deck: false },
+          { a: 5, b: 1, deck: false },
+          { a: 1, b: 6, deck: false },
+          { a: 6, b: 2, deck: false },
+          { a: 2, b: 7, deck: false },
+          { a: 7, b: 3, deck: false },
+          { a: 3, b: 8, deck: false },
+          { a: 8, b: 4, deck: false },
+          { a: 5, b: 6, deck: false },
+          { a: 6, b: 7, deck: false },
+          { a: 7, b: 8, deck: false },
+        ];
+        return {
+          level,
+          truss: { nodes, beams: [...deck, ...supports] },
+          unsupported: { nodes: nodes.slice(0, 5), beams: deck },
+          empty: {
+            nodes: [nodes[0], nodes[4]],
+            beams: [],
+          },
+        };
+      }
+
+      function runAtRenderRate(level, graph, load, framesPerSecond) {
+        const simulation = new BridgeSimulation(level, graph, { load });
+        let frames = 0;
+        while (simulation.status === "running" && frames < framesPerSecond * 20) {
+          simulation.step(1 / framesPerSecond);
+          frames += 1;
+        }
+        return simulation.result();
+      }
+
+      test("same seed has the same mechanical fingerprint", () => {
+        const first = generateRandomLevel("browser-determinism");
+        const second = generateRandomLevel("browser-determinism");
+        equal(first.generator.version, GENERATOR_VERSION);
+        assert(
+          first.generator.calibration.solverCertified,
+          "a playable level must be solver-certified",
+        );
+        equal(first.challenge.fingerprint, second.challenge.fingerprint);
+        equal(JSON.stringify(first.anchors), JSON.stringify(second.anchors));
+        equal(JSON.stringify(first.groundSegments), JSON.stringify(second.groundSegments));
+        equal(JSON.stringify(first.hazards), JSON.stringify(second.hazards));
+      });
+
+      test("seed corpus covers every mechanical archetype", () => {
+        const archetypes = new Set();
+        const regimes = new Set();
+        for (let index = 0; index < 1000; index += 1) {
+          const level = generateRandomLevel(`browser-corpus-${index}`, { certify: false });
+          const duplicate = generateRandomLevel(level.seed, { certify: false });
+          validateLevel(level);
+          archetypes.add(level.challenge.archetype);
+          regimes.add(level.generator.regime);
+          equal(
+            duplicate.challenge.fingerprint,
+            level.challenge.fingerprint,
+            `mechanical fingerprint changed for ${level.seed}`,
+          );
+          equal(
+            JSON.stringify(duplicate.hazards),
+            JSON.stringify(level.hazards),
+            `mechanical hazards changed for ${level.seed}`,
+          );
+          assert(level.challenge.ratedLoad > 0, "rated load must be positive");
+          assert(level.challenge.referenceCost > 0, "reference cost must be positive");
+          const reference = generateReferenceBridge(level.seed, { certify: false });
+          assert(
+            level.budget >= level.challenge.referenceCost * 1.25,
+            "budget must cover 125 percent of reference cost",
+          );
+          assert(
+            Math.abs(reference.cost - level.challenge.referenceCost) < 1,
+            "reference cost is not reproducible",
+          );
+          assert(reference.cost <= level.budget, "reference exceeds budget");
+          const editor = new BridgeEditor(level);
+          const referenceValidation = editor.validateSnapshot(reference);
+          assert(
+            referenceValidation.valid,
+            `invalid ${level.challenge.archetype} reference for ${level.seed}: ` +
+              referenceValidation.reason,
+          );
+          assert(level.anchors.length >= 4, "each site needs foundations");
+          assert(level.hazards.length >= 2, "terrain and water hazards are required");
+          assert(level.buildExclusions.length >= 2, "physical exclusions are required");
+          for (const water of level.waterBodies) {
+            const hazard = level.hazards.find(
+              (candidate) => candidate.id === `${water.id}-hazard`,
+            );
+            const exclusion = level.buildExclusions.find(
+              (candidate) => candidate.id === `${water.id}-build-exclusion`,
+            );
+            assert(hazard?.type === "water", `${water.id} needs its own water hazard`);
+            equal(
+              JSON.stringify(hazard.points),
+              JSON.stringify(water.points),
+              `${water.id} hazard differs from rendered water`,
+            );
+            equal(
+              JSON.stringify(exclusion?.points),
+              JSON.stringify(water.points),
+              `${water.id} exclusion differs from rendered water`,
+            );
+          }
+          for (const terrain of level.terrain) {
+            const hazard = level.hazards.find(
+              (candidate) => candidate.id === `${terrain.id}-impact`,
+            );
+            const exclusion = level.buildExclusions.find(
+              (candidate) => candidate.id === `${terrain.id}-build-exclusion`,
+            );
+            equal(
+              JSON.stringify(hazard?.points),
+              JSON.stringify(terrain.points),
+              `${terrain.id} hazard differs from rendered terrain`,
+            );
+            equal(
+              JSON.stringify(exclusion?.points),
+              JSON.stringify(terrain.points),
+              `${terrain.id} exclusion differs from rendered terrain`,
+            );
+          }
+          if (level.challenge.archetype === "twin_channel_island") {
+            assert(level.waterBodies.length >= 2, "twin channels need separate water bodies");
+            assert(level.groundSegments.length >= 3, "island must be driveable ground");
+          }
+          for (const anchor of level.anchors) {
+            assert(anchor.x >= 0 && anchor.x <= level.canvas.width, "anchor x is out of bounds");
+            assert(anchor.y >= 0 && anchor.y <= level.canvas.height, "anchor y is out of bounds");
+          }
+        }
+        equal(archetypes.size, 4, "all four archetypes must appear");
+        equal(regimes.size, 7, "all seven biome regimes must appear");
+      });
+
+      test("each archetype reference bridge passes while its unbraced deck fails", () => {
+        const examples = new Map();
+        for (let index = 0; index < 1000; index += 1) {
+          const seed = `browser-reference-${index}`;
+          const level = generateRandomLevel(seed);
+          const entries = examples.get(level.challenge.archetype) ?? [];
+          if (entries.length < 5) {
+            entries.push({ seed, level });
+            examples.set(level.challenge.archetype, entries);
+          }
+          if (examples.size === 4 && [...examples.values()].every((items) => items.length === 5)) {
+            break;
+          }
+        }
+        equal(examples.size, 4, "reference sample did not cover every archetype");
+        equal(
+          [...examples.values()].reduce((sum, items) => sum + items.length, 0),
+          20,
+          "reference sample was incomplete",
+        );
+
+        for (const entries of examples.values()) {
+          for (const { seed, level } of entries) {
+            assert(
+              level.generator.calibration.solverCertified,
+              `${seed} was not solver-certified`,
+            );
+            const reference = generateReferenceBridge(seed);
+            assert(
+              Math.abs(reference.cost - level.challenge.referenceCost) < 1,
+              "reference cost changed between generation and certification",
+            );
+            assert(reference.cost <= level.budget, "reference bridge exceeds budget");
+            const referenceEditor = new BridgeEditor(level);
+            const validation = referenceEditor.validateSnapshot(reference);
+            let validationDetail = validation.reason ?? "unknown";
+            if (!validation.valid) {
+              const badNode = reference.nodes.findIndex(
+                (node, index) =>
+                  index >= level.anchors.length &&
+                  referenceEditor.placementReason(node),
+              );
+              const badBeam = reference.beams.findIndex((beam) =>
+                referenceEditor.beamPlacementReason(
+                  reference.nodes[beam.a],
+                  reference.nodes[beam.b],
+                ),
+              );
+              validationDetail +=
+                ` seed=${seed} node=${badNode}` +
+                ` ${JSON.stringify(reference.nodes[badNode])}` +
+                ` beam=${badBeam} ${JSON.stringify(reference.beams[badBeam])}` +
+                ` endpoints=${JSON.stringify(
+                  badBeam < 0
+                    ? null
+                    : [
+                        reference.nodes[reference.beams[badBeam].a],
+                        reference.nodes[reference.beams[badBeam].b],
+                      ],
+                )}`;
+            }
+            assert(
+              validation.valid && referenceEditor.restore(reference),
+              `${level.challenge.archetype} reference is not constructible: ${validationDetail}`,
+            );
+            const passing = runTrial(level, reference, level.challenge.ratedLoad);
+                    assert(
+                      passing.status === "won",
+                      `${level.challenge.archetype} reference failed for ${seed}: ${passing.reason}; ` +
+                              `load=${level.challenge.ratedLoad} peak=${passing.peakUtilization} ` +
+                              `broken=${passing.brokenCount} first=${JSON.stringify(passing.firstFailure)} ` +
+                              `vehicle=${JSON.stringify(passing.vehicle)} ` +
+                              `deck=${JSON.stringify(passing.deckYRange)} roadY=${level.roadY}`,
+            );
+            const unsupported = {
+              nodes: reference.nodes,
+              beams: reference.beams.filter((beam) => beam.deck),
+            };
+            const failing = runTrial(level, unsupported, level.challenge.ratedLoad);
+            assert(
+              failing.status === "lost",
+              `${level.challenge.archetype} unsupported deck passed`,
+            );
+          }
+        }
+      });
+
+      test("editor undo, redo, reset and restore preserve a valid graph", () => {
+        const generated = generateRandomLevel("browser-editor");
+        const level = {
+          ...generated,
+          roadY: 100,
+          budget: 100000,
+          anchors: [
+            { x: 100, y: 100 },
+            { x: 300, y: 100 },
+          ],
+          terrain: [],
+          buildExclusions: [],
+          navigationClearances: [],
+        };
+        const editor = new BridgeEditor(level);
+        editor.setBudgetEnforced(false);
+        const candidate = { x: 160, y: 160 };
+        editor.selectedNode = 0;
+        editor.handleEmptyClick(candidate);
+        assert(editor.beams.length === 1, "beam was not created");
+        const graph = editor.snapshot();
+        editor.undo();
+        assert(editor.beams.length === 0, "undo did not remove beam");
+        editor.redo();
+        assert(editor.beams.length === 1, "redo did not restore beam");
+        editor.reset();
+        assert(editor.beams.length === 0, "reset did not clear bridge");
+        editor.undo();
+        assert(editor.beams.length === 1, "reset was not undoable");
+        assert(editor.restore(graph), "valid graph could not be restored");
+      });
+
+      test("editor accepts the exact budget boundary and rejects the next purchase", () => {
+        const level = editorFixture({ budget: 150 });
+        const editor = new BridgeEditor(level);
+        editor.selectedNode = 0;
+        editor.handleEmptyClick({ x: 160, y: 100 });
+        equal(editor.nodes.length, 3, "node at exact budget was rejected");
+        equal(editor.beams.length, 1, "beam at exact budget was rejected");
+        assert(
+          Math.abs(editor.totalCost() - level.budget) < 0.001,
+          "exact budget did not produce zero headroom",
+        );
+        assert(Math.abs(editor.remainingBudget()) < 0.001, "remaining budget was not zero");
+
+        editor.handleEmptyClick({ x: 220, y: 100 });
+        equal(editor.nodes.length, 3, "over-budget node was added");
+        equal(editor.beams.length, 1, "over-budget beam was added");
+        assert(editor.message.includes("Budget"), "over-budget edit did not explain rejection");
+
+        editor.setBudgetEnforced(false);
+        editor.handleEmptyClick({ x: 220, y: 100 });
+        equal(editor.nodes.length, 4, "sandbox budget bypass did not allow construction");
+        equal(editor.beams.length, 2, "sandbox beam was not added");
+      });
+
+      test("editor splits interactive crossings and rejects unsplit shared graphs", () => {
+        const level = editorFixture();
+        const nodes = [
+          { x: 100, y: 100, fixed: true },
+          { x: 300, y: 100, fixed: true },
+          { x: 200, y: 40, fixed: false },
+          { x: 200, y: 160, fixed: false },
+        ];
+        const editor = new BridgeEditor(level);
+        assert(editor.restore({ nodes, beams: [] }), "crossing fixture could not be restored");
+        assert(editor.addBeam(0, 1), "first crossing beam was not added");
+        assert(editor.addBeam(2, 3), "second crossing beam was not added");
+        equal(editor.nodes.length, 5, "crossing did not create a joint");
+        equal(editor.beams.length, 4, "crossing beams were not split into four members");
+        const jointIndex = editor.nodes.findIndex(
+          (node) => Math.abs(node.x - 200) < 0.001 && Math.abs(node.y - 100) < 0.001,
+        );
+        assert(jointIndex >= 0, "crossing joint is missing");
+        equal(
+          editor.beams.filter((beam) => beam.a === jointIndex || beam.b === jointIndex).length,
+          4,
+          "crossing joint does not connect all four members",
+        );
+
+        const validator = new BridgeEditor(level);
+        const unsplit = validator.validateSnapshot({
+          nodes,
+          beams: [
+            { a: 0, b: 1 },
+            { a: 2, b: 3 },
+          ],
+        });
+        assert(!unsplit.valid, "unsplit crossing blueprint was accepted");
+        assert(unsplit.reason.includes("crossing"), "crossing rejection reason was unclear");
+
+        const passThrough = validator.validateSnapshot({
+          nodes: [
+            nodes[0],
+            nodes[1],
+            { x: 200, y: 100, fixed: false },
+          ],
+          beams: [{ a: 0, b: 1 }],
+        });
+        assert(!passThrough.valid, "beam passing through a node was accepted");
+        assert(passThrough.reason.includes("split"), "pass-through rejection reason was unclear");
+      });
+
+      test("editor consumes physical exclusions and navigation clearances", () => {
+        const solid = {
+          id: "test-solid",
+          kind: "terrain",
+          reason: "test solid blocked",
+          points: [
+            [150, 120],
+            [250, 120],
+            [250, 220],
+            [150, 220],
+          ],
+        };
+        const clearance = {
+          id: "test-clearance",
+          kind: "vehicle",
+          reason: "test clearance blocked",
+          points: [
+            [150, 40],
+            [250, 40],
+            [250, 80],
+            [150, 80],
+          ],
+        };
+        const level = editorFixture({
+          buildExclusions: [solid],
+          navigationClearances: [clearance],
+        });
+        const editor = new BridgeEditor(level);
+        equal(editor.placementReason({ x: 200, y: 160 }), solid.reason);
+        const initialNodeCount = editor.nodes.length;
+        editor.handleEmptyClick({ x: 200, y: 160 });
+        equal(editor.nodes.length, initialNodeCount, "node was placed inside terrain");
+
+        const nodes = [
+          { x: 100, y: 100, fixed: true },
+          { x: 300, y: 100, fixed: true },
+          { x: 100, y: 160, fixed: false },
+          { x: 300, y: 160, fixed: false },
+        ];
+        assert(editor.restore({ nodes, beams: [] }), "exclusion fixture could not be restored");
+        assert(!editor.addBeam(2, 3), "beam through terrain was accepted");
+        equal(editor.message, solid.reason);
+        equal(
+          editor.beamPlacementReason({ x: 100, y: 60 }, { x: 300, y: 60 }),
+          clearance.reason,
+          "vehicle clearance did not block a crossing beam",
+        );
+
+        const sharedLevel = editorFixture({ buildExclusions: [solid] });
+        const sharedGraph = {
+          nodes: [
+            ...sharedLevel.anchors.map((anchor) => ({ ...anchor, fixed: true })),
+            { x: 200, y: 160, fixed: false },
+          ],
+          beams: [],
+        };
+        const decoded = decodeBlueprint(
+          sharedLevel,
+          encodeBlueprint(sharedLevel, sharedGraph),
+        );
+        assert(
+          !new BridgeEditor(sharedLevel).restore(decoded, { silent: true }),
+          "shared node inside an exclusion survived editor validation",
+        );
+      });
+
+      test("blueprints round-trip and reject a different seed", () => {
+        const level = generateRandomLevel("browser-blueprint");
+        const editor = new BridgeEditor(level);
+        const graph = editor.snapshot();
+        graph.beams.push({ a: 1, b: 0 });
+        const encoded = encodeBlueprint(level, graph);
+        const restored = decodeBlueprint(level, encoded);
+        equal(restored.nodes.length, level.anchors.length);
+        equal(restored.beams.length, 1);
+        equal(
+          encodeBlueprint(level, restored),
+          encoded,
+          "blueprint encoding was not canonical",
+        );
+
+        const other = generateRandomLevel("browser-blueprint-other");
+        let rejected = false;
+        try {
+          decodeBlueprint(other, encoded);
+        } catch {
+          rejected = true;
+        }
+        assert(rejected, "cross-seed blueprint was accepted");
+      });
+
+      test("shared blueprints reject malformed and version-mismatched payloads", () => {
+        const level = generateRandomLevel("browser-blueprint-validation");
+        const graph = new BridgeEditor(level).snapshot();
+        graph.beams.push({ a: 0, b: 1 });
+        const encoded = encodeBlueprint(level, graph);
+        const decoded = decodeBlueprint(level, encoded);
+        assert(
+          new BridgeEditor(level).restore(decoded, { silent: true }),
+          "valid shared blueprint failed editor validation",
+        );
+        equal(
+          designFromLocationHash(hashForDesign(encoded)),
+          encoded,
+          "share fragment did not round-trip",
+        );
+
+        const basePayload = {
+          v: BLUEPRINT_VERSION,
+          g: level.generator.version,
+          p: level.physics.version,
+          f: level.challenge.fingerprint,
+          n: [],
+          b: [],
+        };
+        expectThrows(() => decodeBlueprint(level, ""), "empty blueprint was accepted");
+        expectThrows(() => decodeBlueprint(level, "%%%"), "invalid base64 blueprint was accepted");
+        expectThrows(
+          () =>
+            decodeBlueprint(
+              level,
+              encodeRawBlueprint({ ...basePayload, v: BLUEPRINT_VERSION + 1 }),
+            ),
+          "future blueprint version was accepted",
+        );
+        expectThrows(
+          () =>
+            decodeBlueprint(
+              level,
+              encodeRawBlueprint({
+                ...basePayload,
+                n: [[level.canvas.width + 1, 20]],
+              }),
+            ),
+          "out-of-bounds shared node was accepted",
+        );
+        expectThrows(
+          () =>
+            decodeBlueprint(
+              level,
+              encodeRawBlueprint({
+                ...basePayload,
+                b: [[0, level.anchors.length]],
+              }),
+            ),
+          "out-of-range shared beam was accepted",
+        );
+        expectThrows(
+          () =>
+            decodeBlueprint(
+              level,
+              encodeRawBlueprint({
+                ...basePayload,
+                b: [
+                  [0, 1],
+                  [1, 0],
+                ],
+              }),
+            ),
+          "duplicate shared beam was accepted",
+        );
+        expectThrows(
+          () => decodeBlueprint(level, "a".repeat(24001)),
+          "oversized blueprint was accepted",
+        );
+
+        const shiftedFoundations = {
+          nodes: graph.nodes.map((node, index) => ({
+            ...node,
+            x: node.x + (index === 0 ? 1 : 0),
+          })),
+          beams: graph.beams,
+        };
+        expectThrows(
+          () => encodeBlueprint(level, shiftedFoundations),
+          "mismatched foundations were encoded",
+        );
+        expectThrows(
+          () =>
+            encodeBlueprint(level, {
+              nodes: graph.nodes,
+              beams: [graph.beams[0], { ...graph.beams[0] }],
+            }),
+          "duplicate beams were encoded",
+        );
+      });
+
+      test("versioned storage helpers isolate drafts and rank records", () => {
+        const level = generateRandomLevel("browser-storage");
+        const other = generateRandomLevel("browser-storage-other");
+        const challengeKey = draftStorageKey(level, "challenge");
+        const sandboxKey = draftStorageKey(level, "sandbox");
+        const recordKey = recordStorageKey(level);
+        const legacyKey = challengeKey.replace(
+          `:draft:v${BLUEPRINT_VERSION}:`,
+          `:draft:v${BLUEPRINT_VERSION - 1}:`,
+        );
+        assert(challengeIdentity(level).includes(level.challenge.fingerprint));
+        assert(challengeKey.includes(`:v${BLUEPRINT_VERSION}:`));
+        assert(recordKey.includes(level.generator.version));
+        assert(recordKey.includes(level.physics.version));
+        assert(challengeKey !== sandboxKey, "sandbox and challenge drafts share a key");
+        assert(
+          challengeKey !== draftStorageKey(other, "challenge"),
+          "different fingerprints share a draft key",
+        );
+
+        const design = encodeBlueprint(level, new BridgeEditor(level).snapshot());
+        const draft = {
+          version: BLUEPRINT_VERSION,
+          seed: level.seed,
+          fingerprint: level.challenge.fingerprint,
+          design,
+        };
+        try {
+          localStorage.removeItem(challengeKey);
+          localStorage.removeItem(legacyKey);
+          assert(storeJson(challengeKey, draft), "draft could not be stored");
+          equal(
+            JSON.stringify(loadStoredJson(challengeKey)),
+            JSON.stringify(draft),
+            "stored draft did not round-trip",
+          );
+          assert(storeJson(legacyKey, { version: BLUEPRINT_VERSION - 1 }));
+          equal(
+            JSON.stringify(loadStoredJson(challengeKey)),
+            JSON.stringify(draft),
+            "legacy draft replaced the current schema",
+          );
+          localStorage.setItem(challengeKey, "{broken json");
+          equal(loadStoredJson(challengeKey), null, "corrupt stored JSON was accepted");
+          const cyclic = {};
+          cyclic.self = cyclic;
+          assert(!storeJson(challengeKey, cyclic), "cyclic storage payload reported success");
+        } finally {
+          localStorage.removeItem(challengeKey);
+          localStorage.removeItem(legacyKey);
+        }
+
+        assert(betterRecord({ maxLoad: 5000, cost: 1000 }, null));
+        assert(
+          betterRecord(
+            { maxLoad: 6000, cost: 1500 },
+            { maxLoad: 5000, cost: 500 },
+          ),
+          "higher certified load did not outrank lower load",
+        );
+        assert(
+          betterRecord(
+            { maxLoad: 6000, cost: 900 },
+            { maxLoad: 6000, cost: 1000 },
+          ),
+          "lower cost did not break an equal-load tie",
+        );
+        assert(
+          !betterRecord(
+            { maxLoad: 6000, cost: 1100 },
+            { maxLoad: 6000, cost: 1000 },
+          ),
+          "higher cost won an equal-load tie",
+        );
+      });
+
+      test("empty and unsupported bridges lose while the reference truss passes", () => {
+        const fixture = physicsFixture();
+        equal(PHYSICS_VERSION, "2.0.0");
+        const empty = runTrial(fixture.level, fixture.empty, 4000, { maxSeconds: 12 });
+        assert(empty.status === "lost", "empty bridge unexpectedly passed");
+        const unsupported = runTrial(fixture.level, fixture.unsupported, 4000, {
+          maxSeconds: 12,
+        });
+        assert(unsupported.status === "lost", "unsupported deck unexpectedly passed");
+        const truss = runTrial(fixture.level, fixture.truss, 4000, { maxSeconds: 12 });
+        assert(
+          truss.status === "won",
+          `reference truss failed: ${truss.reason}; peak=${truss.peakUtilization} ` +
+            `broken=${truss.brokenCount} first=${JSON.stringify(truss.firstFailure)} ` +
+            `vehicle=${JSON.stringify(truss.vehicle)}`,
+        );
+        const heavy = runTrial(fixture.level, fixture.truss, 100000, { maxSeconds: 12 });
+        assert(heavy.status === "lost", "extreme load unexpectedly passed");
+      });
+
+      test("fixed simulation is repeatable and beam-order independent", () => {
+        const fixture = physicsFixture();
+        const first = runTrial(fixture.level, fixture.truss, 4000, { maxSeconds: 12 });
+        const second = runTrial(fixture.level, fixture.truss, 4000, { maxSeconds: 12 });
+        const reversed = runTrial(
+          fixture.level,
+          { nodes: fixture.truss.nodes, beams: [...fixture.truss.beams].reverse() },
+          4000,
+          { maxSeconds: 12 },
+        );
+        equal(first.status, second.status);
+        equal(first.completionTick, second.completionTick);
+        equal(first.status, reversed.status);
+        equal(first.completionTick, reversed.completionTick);
+        assert(
+          Math.abs(first.peakUtilization - reversed.peakUtilization) < 1e-9,
+          "beam order changed peak utilization",
+        );
+
+        const heavy = runTrial(fixture.level, fixture.truss, 100000, {
+          maxSeconds: 12,
+        });
+        const heavyReversed = runTrial(
+          fixture.level,
+          { nodes: fixture.truss.nodes, beams: [...fixture.truss.beams].reverse() },
+          100000,
+          { maxSeconds: 12 },
+        );
+        equal(heavy.status, heavyReversed.status, "beam order changed overload outcome");
+        equal(
+          JSON.stringify(heavy.breakSequence.map((failure) => failure.key)),
+          JSON.stringify(heavyReversed.breakSequence.map((failure) => failure.key)),
+          "beam order changed break sequence",
+        );
+      });
+
+      test("dangling stubs do not turn beam subdivisions into structural braces", () => {
+        const fixture = physicsFixture();
+        const nodes = [
+          { x: 180, y: 140, fixed: true },
+          { x: 250, y: 140, fixed: false },
+          { x: 320, y: 140, fixed: false },
+          { x: 390, y: 140, fixed: false },
+          { x: 460, y: 140, fixed: true },
+          { x: 250, y: 190, fixed: false },
+          { x: 320, y: 190, fixed: false },
+          { x: 390, y: 190, fixed: false },
+        ];
+        const deck = [
+          { a: 0, b: 1, deck: true },
+          { a: 1, b: 2, deck: true },
+          { a: 2, b: 3, deck: true },
+          { a: 3, b: 4, deck: true },
+        ];
+        const dangling = [
+          { a: 1, b: 5, deck: false },
+          { a: 2, b: 6, deck: false },
+          { a: 3, b: 7, deck: false },
+        ];
+        const simulation = new BridgeSimulation(
+          fixture.level,
+          { nodes, beams: [...deck, ...dangling] },
+          { load: 4000 },
+        );
+        for (const beam of simulation.beams.filter((candidate) => candidate.deck)) {
+          equal(
+            Math.round(beam.effectiveSpan),
+            280,
+            "a dangling third member incorrectly reset the unsupported span",
+          );
+        }
+      });
+
+      test("30, 60, 120 and 144 Hz rendering produce the same crossing", () => {
+        const fixture = physicsFixture();
+        const results = [30, 60, 120, 144].map((rate) => {
+          return runAtRenderRate(fixture.level, fixture.truss, 4000, rate);
+        });
+        for (const result of results.slice(1)) {
+          equal(result.status, results[0].status, "render rate changed outcome");
+          equal(result.completionTick, results[0].completionTick, "render rate changed end tick");
+          assert(
+            Math.abs(result.peakUtilization - results[0].peakUtilization) < 1e-9,
+            "render rate changed utilization",
+          );
+        }
+      });
+
+      test("fatal water contact on the goal side cannot become a win", () => {
+        const fixture = physicsFixture();
+        fixture.level.hazards = [
+          {
+            type: "water",
+            points: [
+              [480, 100],
+              [640, 100],
+              [640, 360],
+              [480, 360],
+            ],
+          },
+        ];
+        const result = runTrial(fixture.level, fixture.truss, 4000, { maxSeconds: 12 });
+        equal(result.status, "lost");
+        assert(
+          result.reason.includes("drowned"),
+          `fatal goal-side hazard used the wrong outcome: ${result.reason}; ` +
+            `vehicle=${JSON.stringify(result.vehicle)}`,
+        );
+      });
+
+      test("a deck above the wheels cannot magnetically catch the vehicle", () => {
+        const fixture = physicsFixture();
+        const raisedNodes = fixture.unsupported.nodes.map((node) => ({
+          ...node,
+          y: node.y - 35,
+        }));
+        const raised = { nodes: raisedNodes, beams: fixture.unsupported.beams };
+        const result = runTrial(fixture.level, raised, 1000, { maxSeconds: 12 });
+        equal(result.status, "lost");
+      });
+
+      test("increasing load cannot turn a failure into a pass", () => {
+        const fixture = physicsFixture();
+        const outcomes = [4000, 8000, 16000, 32000, 64000, 128000].map((load) => {
+          return runTrial(fixture.level, fixture.truss, load, { maxSeconds: 12 }).status;
+        });
+        const firstFailure = outcomes.indexOf("lost");
+        assert(firstFailure > 0, "load ladder did not contain pass and failure");
+        assert(
+          outcomes.slice(firstFailure).every((status) => status === "lost"),
+          "a heavier deterministic trial passed after a failure",
+        );
+      });
+
+      test("an airborne vehicle held beyond the tip limit loses", () => {
+        const fixture = physicsFixture();
+        fixture.level.hazards = [];
+        const simulation = new BridgeSimulation(fixture.level, fixture.empty, { load: 4000 });
+        simulation.vehicle.x = 320;
+        simulation.vehicle.y = 60;
+        simulation.vehicle.previousY = 60;
+        simulation.vehicle.vx = 0;
+        simulation.vehicle.angle = 1.2;
+        for (let index = 0; index < 30 && simulation.status === "running"; index += 1) {
+          simulation.tick();
+        }
+        equal(simulation.status, "lost");
+        assert(simulation.reason.includes("tipped"), "tip failure was not reported");
+      });
+
+      test("a supported vehicle without traction eventually stalls", () => {
+        const fixture = physicsFixture();
+        fixture.level.hazards = [];
+        fixture.level.vehicle = { ...fixture.level.vehicle, speed: 0 };
+        const simulation = new BridgeSimulation(fixture.level, fixture.truss, {
+          load: 1000,
+        });
+        simulation.vehicle.x = 100;
+        simulation.vehicle.y = fixture.level.roadY - 25;
+        simulation.vehicle.previousY = simulation.vehicle.y;
+        simulation.vehicle.vx = 0;
+        for (let index = 0; index < 700 && simulation.status === "running"; index += 1) {
+          simulation.tick();
+        }
+        equal(simulation.status, "lost");
+        assert(simulation.reason.includes("stalled"), "stall failure was not reported");
+      });
+
+      test("capacity search certifies the final pass and next failure", () => {
+        const fixture = physicsFixture();
+        const search = new CapacitySearch(fixture.level, fixture.truss, {
+          startLoad: 4000,
+          maxLoad: 128000,
+          resolution: 50,
+          maxSeconds: 12,
+        });
+        let guard = 0;
+        while (!search.done && guard < 10000) {
+          search.advance(20);
+          guard += 1;
+        }
+        assert(search.done, "capacity search did not finish");
+        assert(search.result.certified, "capacity boundary was not certified");
+        assert(search.result.maxLoad >= 4000, "capacity fell below rated load");
+        assert(
+          search.result.failingLoad === null ||
+            search.result.failingLoad === search.result.maxLoad + 50,
+          "capacity boundary is not adjacent",
+        );
+        assert(search.result.passResult?.status === "won", "passing boundary was not verified");
+        if (search.result.failingLoad !== null) {
+          assert(search.result.failResult?.status === "lost", "failure boundary was not verified");
+        }
+      });
+
+      test("an incomplete capacity trial cannot be certified", () => {
+        const fixture = physicsFixture();
+        const search = new CapacitySearch(fixture.level, fixture.truss, {
+          startLoad: 4000,
+          maxLoad: 8000,
+          resolution: 50,
+          maxSeconds: SIMULATION_DT,
+        });
+        while (!search.done) {
+          search.advance(20);
+        }
+        assert(!search.result.certified, "timed-out search was certified");
+        assert(search.result.error, "timed-out search did not report an error");
+        equal(search.result.failingLoad, null);
+      });
+
+      let failures = 0;
+      for (const entry of tests) {
+        const row = document.createElement("li");
+        try {
+          await entry.callback();
+          row.textContent = `PASS: ${entry.name}`;
+        } catch (error) {
+          failures += 1;
+          row.textContent = `FAIL: ${entry.name}: ${error.stack || error.message}`;
+        }
+        results.append(row);
+      }
+
+      document.body.dataset.testStatus = failures === 0 ? "passed" : "failed";
+      document.body.dataset.failureCount = String(failures);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Bridgebuilder app integration checks</title>
+    <style>
+      iframe {
+        width: 1300px;
+        height: 900px;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body data-test-status="running" data-failure-count="0">
+    <h1>Bridgebuilder app integration checks</h1>
+    <ol id="results"></ol>
+    <div id="frames"></div>
+    <img src="app_runner_wait" alt="" hidden>
+    <script type="module">
+      import {
+        BLUEPRINT_VERSION,
+        draftStorageKey,
+        encodeBlueprint,
+        hashForDesign,
+        recordStorageKey,
+      } from "../static/game/js/blueprint.js";
+      import { BridgeEditor } from "../static/game/js/editor.js";
+      import {
+        generateRandomLevel,
+        generateReferenceBridge,
+      } from "../static/game/js/generator.js";
+
+      const results = document.getElementById("results");
+      const frameHost = document.getElementById("frames");
+      let failures = 0;
+
+      function assert(condition, message = "assertion failed") {
+        if (!condition) {
+          throw new Error(message);
+        }
+      }
+
+      function equal(actual, expected, message = "values differ") {
+        if (actual !== expected) {
+          throw new Error(`${message}: expected ${expected}, received ${actual}`);
+        }
+      }
+
+      function delay(milliseconds) {
+        return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+      }
+
+      async function waitFor(predicate, message, timeout = 15000) {
+        const started = performance.now();
+        while (performance.now() - started < timeout) {
+          const value = predicate();
+          if (value) {
+            return value;
+          }
+          await delay(25);
+        }
+        throw new Error(message);
+      }
+
+      async function check(name, callback) {
+        const row = document.createElement("li");
+        try {
+          await callback();
+          row.textContent = `PASS: ${name}`;
+          results.append(row);
+          return true;
+        } catch (error) {
+          failures += 1;
+          row.textContent = `FAIL: ${name}: ${error.stack || error.message}`;
+          results.append(row);
+          return false;
+        }
+      }
+
+      function clearBridgebuilderStorage() {
+        const keys = [];
+        for (let index = 0; index < localStorage.length; index += 1) {
+          const key = localStorage.key(index);
+          if (key?.startsWith("bridgebuilder:")) {
+            keys.push(key);
+          }
+        }
+        for (const key of keys) {
+          localStorage.removeItem(key);
+        }
+      }
+
+      async function loadApp(seed, design = "") {
+        const frame = document.createElement("iframe");
+        frame.title = `Bridgebuilder ${seed}`;
+        const url = new URL("../", window.location.href);
+        url.searchParams.set("seed", seed);
+        if (design) {
+          url.hash = hashForDesign(design);
+        }
+
+        const loaded = new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(
+            () => reject(new Error(`app frame did not load for ${seed}`)),
+            15000,
+          );
+          frame.addEventListener(
+            "load",
+            () => {
+              window.clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        frame.src = url.toString();
+        frameHost.append(frame);
+        await loaded;
+        await waitFor(
+          () => frame.contentDocument?.body?.dataset.appReady === "true",
+          `app did not become ready for ${seed}`,
+        );
+        await waitFor(
+          () => typeof frame.contentWindow.bridgebuilderDebug?.state === "function",
+          `debug state was not exposed for ${seed}`,
+        );
+        const runtimeErrors = [];
+        frame.contentWindow.addEventListener("error", (event) => {
+          runtimeErrors.push(event.error?.stack || event.message);
+        });
+        return {
+          frame,
+          window: frame.contentWindow,
+          document: frame.contentDocument,
+          debug: frame.contentWindow.bridgebuilderDebug,
+          runtimeErrors,
+        };
+      }
+
+      function switchMode(app, mode) {
+        const select = app.document.getElementById("mode-select");
+        select.value = mode;
+        select.dispatchEvent(new app.window.Event("change", { bubbles: true }));
+      }
+
+      function click(app, element) {
+        element.dispatchEvent(
+          new app.window.MouseEvent("click", {
+            bubbles: true,
+            button: 0,
+          }),
+        );
+      }
+
+      function touchCanvasPoint(app, point, pointerId) {
+        const canvas = app.document.getElementById("game-canvas");
+        const rect = canvas.getBoundingClientRect();
+        assert(rect.width > 0 && rect.height > 0, "canvas has no interactive bounds");
+        const clientX = rect.left + point.x * (rect.width / canvas.width);
+        const clientY = rect.top + point.y * (rect.height / canvas.height);
+        const event = new app.window.PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+          pointerId,
+          pointerType: "touch",
+          isPrimary: true,
+        });
+        canvas.dispatchEvent(event);
+      }
+
+      function findTouchBuild(level, reference) {
+        const fixedCount = level.anchors.length;
+        const snap = level.snap || 10;
+        for (const beam of reference.beams) {
+          let anchorIndex = null;
+          let targetIndex = null;
+          if (beam.a < fixedCount) {
+            anchorIndex = beam.a;
+            targetIndex = beam.b;
+          } else if (beam.b < fixedCount) {
+            anchorIndex = beam.b;
+            targetIndex = beam.a;
+          }
+          if (anchorIndex === null || targetIndex < fixedCount) {
+            continue;
+          }
+
+          const source = reference.nodes[targetIndex];
+          const target = {
+            x: Math.round(source.x / snap) * snap,
+            y: Math.round(source.y / snap) * snap,
+          };
+          const probe = new BridgeEditor(level);
+          probe.setBudgetEnforced(false);
+          probe.selectedNode = anchorIndex;
+          probe.handleEmptyClick(target);
+          if (probe.beams.length > 0) {
+            return {
+              anchor: level.anchors[anchorIndex],
+              target,
+            };
+          }
+        }
+        throw new Error("reference bridge did not expose a touch-buildable first member");
+      }
+
+      function parseStored(key) {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+      }
+
+      clearBridgebuilderStorage();
+
+      const interactionPassed = await check(
+        "real app modes, touch editing, autosave isolation, and accessible controls",
+        async () => {
+        const seed = "app-integration-touch";
+        const level = generateRandomLevel(seed);
+        const reference = generateReferenceBridge(seed);
+        const challengeKey = draftStorageKey(level, "challenge");
+        const sandboxKey = draftStorageKey(level, "sandbox");
+        const oldVersionKey = challengeKey.replace(
+          `:v${BLUEPRINT_VERSION}:`,
+          `:v${BLUEPRINT_VERSION - 1}:`,
+        );
+        localStorage.setItem(oldVersionKey, JSON.stringify({ version: 1, design: "stale" }));
+
+        const app = await loadApp(seed);
+        try {
+          const initial = app.debug.state();
+          equal(initial.gameMode, "challenge", "Challenge was not the default mode");
+          equal(app.document.getElementById("mode-select").value, "challenge");
+          assert(
+            challengeKey !== sandboxKey &&
+              challengeKey.includes(`:v${BLUEPRINT_VERSION}:`) &&
+              sandboxKey.includes(":sandbox:"),
+            "draft keys are not isolated by version and mode",
+          );
+          equal(initial.beamCount, 0, "stale-version draft was restored");
+
+          switchMode(app, "sandbox");
+          await waitFor(
+            () => app.debug.state().gameMode === "sandbox",
+            "Sandbox mode did not activate",
+          );
+          await waitFor(
+            () => app.document.getElementById("live-status").textContent.includes("Sandbox mode"),
+            "mode change was not announced",
+          );
+          assert(
+            new URL(app.window.location.href).searchParams.get("mode") === "sandbox",
+            "Sandbox mode was not reflected in the URL",
+          );
+
+          const touchBuild = findTouchBuild(level, reference);
+          touchCanvasPoint(app, touchBuild.anchor, 41);
+          await waitFor(
+            () => app.debug.state().selectedNode !== null,
+            "touch did not select an anchor",
+          );
+          touchCanvasPoint(app, touchBuild.target, 42);
+          await waitFor(
+            () => app.debug.state().beamCount > 0,
+            "touch did not create a bridge member",
+          );
+          await waitFor(
+            () => /node placed|beam/i.test(
+              app.document.getElementById("live-status").textContent,
+            ),
+            "touch build feedback was not announced",
+          );
+          await delay(250);
+
+          const challengeDraft = parseStored(challengeKey);
+          const sandboxDraft = parseStored(sandboxKey);
+          equal(challengeDraft?.version, BLUEPRINT_VERSION, "Challenge draft version is wrong");
+          equal(sandboxDraft?.version, BLUEPRINT_VERSION, "Sandbox draft version is wrong");
+          assert(
+            challengeDraft.design !== sandboxDraft.design,
+            "Challenge and Sandbox drafts were not isolated",
+          );
+
+          switchMode(app, "challenge");
+          await waitFor(
+            () => app.debug.state().gameMode === "challenge",
+            "Challenge mode did not reactivate",
+          );
+          equal(app.debug.state().beamCount, 0, "Challenge draft was replaced by Sandbox work");
+          switchMode(app, "sandbox");
+          await waitFor(
+            () => app.debug.state().beamCount > 0,
+            "Sandbox draft was not restored",
+          );
+
+          const reset = app.document.getElementById("reset-button");
+          const undo = app.document.getElementById("undo-button");
+          click(app, reset);
+          equal(app.debug.state().beamCount, 0, "Reset did not clear the bridge");
+          await waitFor(
+            () => /bridge cleared/i.test(
+              app.document.getElementById("live-status").textContent,
+            ),
+            "Reset feedback was not announced",
+          );
+          assert(!undo.disabled, "undo was not enabled after Reset");
+          click(app, undo);
+          await waitFor(() => app.debug.state().beamCount > 0, "Reset could not be undone");
+          await waitFor(
+            () => /undo/i.test(app.document.getElementById("live-status").textContent),
+            "Undo feedback was not announced",
+          );
+
+          const speedFour = app.document.querySelector('[data-speed="4"]');
+          click(app, speedFour);
+          assert(app.debug.startTest(50), "debug load test did not start");
+          equal(app.debug.state().mode, "simulation");
+          equal(app.document.getElementById("test-button").getAttribute("aria-pressed"), "true");
+          equal(app.document.getElementById("edit-button").getAttribute("aria-pressed"), "false");
+          equal(speedFour.getAttribute("aria-pressed"), "true");
+
+          const pause = app.document.getElementById("pause-button");
+          assert(!pause.disabled, "Pause was disabled during a running test");
+          click(app, pause);
+          equal(app.debug.state().paused, true, "Pause did not stop the test");
+          equal(pause.getAttribute("aria-pressed"), "true");
+          await waitFor(
+            () => /paused/i.test(app.document.getElementById("live-status").textContent),
+            "Pause was not announced",
+          );
+          click(app, pause);
+          equal(app.debug.state().paused, false, "Resume did not restart the test");
+          equal(pause.getAttribute("aria-pressed"), "false");
+
+          const resultPanel = app.document.getElementById("result-panel");
+          await waitFor(() => {
+            assert(
+              app.runtimeErrors.length === 0,
+              `app runtime error: ${app.runtimeErrors.join("\n")}`,
+            );
+            return !resultPanel.hidden;
+          }, "load test did not produce a result", 20000);
+          assert(
+            ["success", "failure"].includes(resultPanel.dataset.outcome),
+            "result did not expose a non-color outcome",
+          );
+          equal(app.document.activeElement, resultPanel, "result panel did not receive focus");
+          assert(
+            app.document.getElementById("result-title").textContent.length > 0 &&
+              app.document.getElementById("result-summary").textContent.length > 0,
+            "result panel did not contain an accessible report",
+          );
+          await waitFor(
+            () => /certified|failed/i.test(
+              app.document.getElementById("live-status").textContent,
+            ),
+            "test result was not announced",
+          );
+
+          click(app, app.document.getElementById("improve-button"));
+          equal(app.debug.state().mode, "build", "Improve did not return to Edit mode");
+          equal(
+            app.document.getElementById("edit-button").getAttribute("aria-pressed"),
+            "true",
+          );
+          equal(
+            app.document.getElementById("test-button").getAttribute("aria-pressed"),
+            "false",
+          );
+          equal(
+            app.document.activeElement,
+            app.document.getElementById("game-canvas"),
+            "Edit mode did not return focus to the canvas",
+          );
+        } finally {
+          app.frame.remove();
+        }
+        },
+      );
+
+      if (interactionPassed) {
+        await check("rated reference pass unlocks Capacity and restores its versioned record", async () => {
+        const seed = "browser-reference-0";
+        const level = generateRandomLevel(seed);
+        const reference = generateReferenceBridge(seed);
+        const design = encodeBlueprint(level, reference);
+        const recordKey = recordStorageKey(level);
+        const oldRecordKey = recordKey.replace(
+          `:v${BLUEPRINT_VERSION}:`,
+          `:v${BLUEPRINT_VERSION - 1}:`,
+        );
+        localStorage.setItem(
+          oldRecordKey,
+          JSON.stringify({ version: BLUEPRINT_VERSION - 1, maxLoad: 999999999 }),
+        );
+
+        let app = await loadApp(seed, design);
+        try {
+          equal(app.debug.state().gameMode, "challenge");
+          equal(app.debug.state().beamCount, reference.beams.length);
+          const speedFour = app.document.querySelector('[data-speed="4"]');
+          click(app, speedFour);
+          assert(
+            app.debug.startTest(level.challenge.ratedLoad),
+            "rated reference test did not start",
+          );
+
+          const resultPanel = app.document.getElementById("result-panel");
+          await waitFor(() => {
+            assert(
+              app.runtimeErrors.length === 0,
+              `app runtime error: ${app.runtimeErrors.join("\n")}`,
+            );
+            return !resultPanel.hidden;
+          }, "rated test did not finish", 25000);
+          equal(resultPanel.dataset.outcome, "success", "reference bridge failed rated load");
+          equal(app.document.activeElement, resultPanel, "rated result did not receive focus");
+          assert(
+            /certified/i.test(app.document.getElementById("result-title").textContent),
+            "rated pass was not reported as certified",
+          );
+
+          const record = parseStored(recordKey);
+          equal(record?.version, BLUEPRINT_VERSION, "personal best record version is wrong");
+          assert(
+            record.maxLoad >= level.challenge.ratedLoad,
+            "rated pass was not persisted as a personal best",
+          );
+          equal(record.fingerprint, level.challenge.fingerprint);
+
+          app.debug.edit();
+          const capacity = app.document.getElementById("capacity-button");
+          assert(!capacity.disabled, "Capacity did not unlock after the rated pass");
+          click(app, capacity);
+          assert(app.debug.state().capacity?.active, "Capacity search did not start");
+          equal(capacity.textContent, "Cancel Capacity");
+          click(app, capacity);
+          assert(!app.debug.state().capacity, "Capacity search did not cancel");
+
+          app.frame.remove();
+          app = await loadApp(seed, design);
+          const restoredCapacity = app.document.getElementById("capacity-button");
+          assert(
+            !restoredCapacity.disabled,
+            "stored personal best did not restore Capacity unlock",
+          );
+          assert(
+            app.debug.state().bestRecord?.maxLoad >= level.challenge.ratedLoad,
+            "stored personal best was not restored",
+          );
+        } finally {
+          app.frame.remove();
+        }
+        });
+      }
+
+      document.body.dataset.failureCount = String(failures);
+      document.body.dataset.testStatus = failures === 0 ? "passed" : "failed";
+    </script>
+  </body>
+</html>

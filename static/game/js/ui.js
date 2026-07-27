@@ -7,7 +7,11 @@ export function pointerToCanvas(canvas, event) {
 }
 
 export function formatCost(value) {
-  return Math.round(value).toString();
+  return Math.round(Number(value) || 0).toString();
+}
+
+export function formatLoad(value) {
+  return `${formatCost(value)} units`;
 }
 
 export function modeLabel(mode, paused) {

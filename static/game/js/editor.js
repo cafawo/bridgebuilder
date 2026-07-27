@@ -1,4 +1,4 @@
-import { clamp } from "./ui.js?v=landscape10";
+import { clamp } from "./ui.js?v=challenge2";
 
 const NODE_RADIUS = 12;
 const BEAM_PICK_DISTANCE = 18;
@@ -9,10 +9,25 @@ const SEGMENT_EPSILON = 0.001;
 export class BridgeEditor {
   constructor(level) {
     this.level = level;
-    this.reset();
+    this.enforceBudget = true;
+    this.nodes = [];
+    this.beams = [];
+    this.selectedNode = null;
+    this.pointer = null;
+    this.hoverNode = null;
+    this.hoverBeam = null;
+    this.history = [];
+    this.redoHistory = [];
+    this.message = "";
+    this.messageUntil = 0;
+    this.reset({ remember: false, silent: true });
   }
 
-  reset() {
+  reset({ remember = true, silent = false } = {}) {
+    if (remember && this.hasUserStructure()) {
+      this.remember();
+    }
+
     this.nodes = this.level.anchors.map((anchor) => ({
       x: anchor.x,
       y: anchor.y,
@@ -23,9 +38,22 @@ export class BridgeEditor {
     this.pointer = null;
     this.hoverNode = null;
     this.hoverBeam = null;
-    this.history = [];
-    this.message = "";
-    this.messageUntil = 0;
+    if (!remember) {
+      this.history = [];
+      this.redoHistory = [];
+    }
+    if (!silent) {
+      this.setMessage(remember ? "Bridge cleared" : "Bridge restored");
+    }
+  }
+
+  setBudgetEnforced(enforced) {
+    this.enforceBudget = Boolean(enforced);
+    return this.enforceBudget;
+  }
+
+  hasUserStructure() {
+    return this.beams.length > 0 || this.nodes.some((node) => !node.fixed);
   }
 
   snapshot() {
@@ -43,6 +71,18 @@ export class BridgeEditor {
       return total + distance(this.nodes[beam.a], this.nodes[beam.b]) * beamCost;
     }, 0);
     return movableNodes * nodeCost + beamTotal;
+  }
+
+  remainingBudget(previewCost = 0) {
+    return this.level.budget - this.totalCost() - previewCost;
+  }
+
+  canUndo() {
+    return this.history.length > 0;
+  }
+
+  canRedo() {
+    return this.redoHistory.length > 0;
   }
 
   currentMessage(now = performance.now()) {
@@ -84,7 +124,14 @@ export class BridgeEditor {
   }
 
   undoHint() {
-    return this.history.length > 0 ? " | Z undo" : "";
+    const hints = [];
+    if (this.canUndo()) {
+      hints.push("Z undo");
+    }
+    if (this.canRedo()) {
+      hints.push("Y redo");
+    }
+    return hints.length ? ` | ${hints.join(" | ")}` : "";
   }
 
   setPointer(rawPoint) {
@@ -123,7 +170,7 @@ export class BridgeEditor {
         });
     const nodeCost = targetNode === null ? this.level.costs.node : 0;
     const cost = nodeCost + plan.cost;
-    const reason = this.previewReason(length, existing, cost);
+    const reason = this.previewReason(length, existing, cost, from, hover, targetNode === null);
     const splitPoints = splitBeam ? [hover] : [];
     splitPoints.push(...plan.crossings.map((crossing) => crossing.point));
 
@@ -136,17 +183,28 @@ export class BridgeEditor {
       splitPoints,
       valid: reason === "",
       reason,
+      cost,
+      projectedCost: this.totalCost() + cost,
+      remainingBudget: this.remainingBudget(cost),
     };
   }
 
-  previewReason(length, existing, cost) {
+  previewReason(length, existing, cost, from, to, createsNode = true) {
     if (length < 8) {
       return "too short";
     }
     if (existing) {
       return "already built";
     }
-    if (this.totalCost() + cost > this.level.budget) {
+    const placementReason = createsNode ? this.placementReason(to) : "";
+    if (placementReason) {
+      return placementReason;
+    }
+    const beamReason = this.beamPlacementReason(from, to);
+    if (beamReason) {
+      return beamReason;
+    }
+    if (this.wouldExceedBudget(cost)) {
       return "over budget";
     }
     return "";
@@ -211,6 +269,19 @@ export class BridgeEditor {
     this.setMessage("Nothing selected");
   }
 
+  deleteSelectionOrHovered() {
+    if (this.selectedNode !== null) {
+      const selected = this.selectedNode;
+      if (this.nodes[selected]?.fixed) {
+        this.cancelSelection();
+      } else {
+        this.deleteNode(selected);
+      }
+      return;
+    }
+    this.deleteHovered();
+  }
+
   cancelSelection() {
     this.selectedNode = null;
     this.setMessage("Build cancelled");
@@ -234,6 +305,12 @@ export class BridgeEditor {
   }
 
   handleEmptyClick(point) {
+    const blockedReason = this.placementReason(point);
+    if (blockedReason) {
+      this.setMessage(blockedReason);
+      return;
+    }
+
     const newNodeCost = this.level.costs.node;
     let extraCost = newNodeCost;
 
@@ -243,10 +320,15 @@ export class BridgeEditor {
       if (!this.canCreateBeamLength(beamLength)) {
         return;
       }
+      const beamReason = this.beamPlacementReason(selected, point);
+      if (beamReason) {
+        this.setMessage(beamReason);
+        return;
+      }
       extraCost += this.planBeamPath(this.selectedNode, point).cost;
     }
 
-    if (this.totalCost() + extraCost > this.level.budget) {
+    if (this.wouldExceedBudget(extraCost)) {
       this.setMessage("Budget exceeded");
       return;
     }
@@ -282,7 +364,15 @@ export class BridgeEditor {
       : null;
     const connectCost = connectPlan ? connectPlan.cost : 0;
 
-    if (this.totalCost() + splitCost + connectCost > this.level.budget) {
+    if (
+      shouldConnect &&
+      this.beamPlacementReason(this.nodes[selected], beamHit.point)
+    ) {
+      this.setMessage(this.beamPlacementReason(this.nodes[selected], beamHit.point));
+      return;
+    }
+
+    if (this.wouldExceedBudget(splitCost + connectCost)) {
       this.setMessage("Budget exceeded");
       return;
     }
@@ -310,9 +400,15 @@ export class BridgeEditor {
       return false;
     }
 
+    const beamReason = this.beamPlacementReason(this.nodes[a], this.nodes[b]);
+    if (beamReason) {
+      this.setMessage(beamReason);
+      return false;
+    }
+
     const plan = this.planBeamPath(a, this.nodes[b], { targetNode: b });
     const extraCost = plan.cost;
-    if (this.totalCost() + extraCost > this.level.budget) {
+    if (this.wouldExceedBudget(extraCost)) {
       this.setMessage("Budget exceeded");
       return false;
     }
@@ -431,8 +527,8 @@ export class BridgeEditor {
 
   isDeckBeam(a, b) {
     const roadY = this.level.roadY;
-    const tolerance = this.level.deckTolerance ?? 26;
-    const maxSlope = this.level.maxDeckSlope ?? 0.34;
+    const tolerance = this.level.deckTolerance;
+    const maxSlope = this.level.maxDeckSlope;
     const dx = Math.abs(b.x - a.x);
     const dy = Math.abs(b.y - a.y);
 
@@ -450,6 +546,58 @@ export class BridgeEditor {
     }
 
     return true;
+  }
+
+  wouldExceedBudget(extraCost = 0) {
+    return this.enforceBudget && this.totalCost() + extraCost > this.level.budget + SEGMENT_EPSILON;
+  }
+
+  placementReason(point) {
+    if (!isFinitePoint(point)) {
+      return "invalid position";
+    }
+    if (
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x > this.level.canvas.width ||
+      point.y > this.level.canvas.height
+    ) {
+      return "outside build area";
+    }
+
+    const exclusion = (this.level.buildExclusions ?? []).find((shape) => {
+      return shapeContainsPoint(shape, point, true);
+    });
+    if (exclusion) {
+      return exclusion.reason || exclusionLabel(exclusion);
+    }
+
+    const terrain = (this.level.terrain ?? []).find((shape) => {
+      return shape.collidable !== false && shapeContainsPoint(shape, point, false);
+    });
+    return terrain ? "inside terrain" : "";
+  }
+
+  beamPlacementReason(from, to) {
+    if (!isFinitePoint(from) || !isFinitePoint(to)) {
+      return "invalid beam";
+    }
+
+    const physicalExclusions = [
+      ...(this.level.buildExclusions ?? []),
+      ...(this.level.buildExclusions?.length ? [] : this.level.terrain ?? []),
+    ];
+    const blocked = physicalExclusions.find((shape) => {
+      return shape.collidable !== false && segmentEntersShape(from, to, shape);
+    });
+    if (blocked) {
+      return blocked.reason || exclusionLabel(blocked);
+    }
+
+    const clearance = (this.level.navigationClearances ?? []).find((shape) => {
+      return segmentEntersShape(from, to, shape);
+    });
+    return clearance ? clearance.reason || "vehicle clearance blocked" : "";
   }
 
   canSplitBeam(beamHit, beam) {
@@ -531,6 +679,10 @@ export class BridgeEditor {
   }
 
   deleteNode(index) {
+    if (!this.nodes[index]) {
+      this.setMessage("Nothing selected");
+      return;
+    }
     if (this.nodes[index].fixed) {
       this.setMessage("Anchor nodes are fixed");
       return;
@@ -556,6 +708,10 @@ export class BridgeEditor {
   }
 
   deleteBeam(index) {
+    if (!this.beams[index]) {
+      this.setMessage("Nothing selected");
+      return;
+    }
     this.remember();
     this.beams.splice(index, 1);
     this.setMessage("Beam deleted");
@@ -565,25 +721,196 @@ export class BridgeEditor {
     const previous = this.history.pop();
     if (!previous) {
       this.setMessage("Nothing to undo");
-      return;
+      return false;
     }
 
-    this.nodes = previous.nodes;
-    this.beams = previous.beams;
-    this.selectedNode = previous.selectedNode;
+    this.redoHistory.push(this.historySnapshot());
+    this.applyHistorySnapshot(previous);
     this.setMessage("Undo");
+    return true;
+  }
+
+  redo() {
+    const next = this.redoHistory.pop();
+    if (!next) {
+      this.setMessage("Nothing to redo");
+      return false;
+    }
+
+    this.history.push(this.historySnapshot());
+    this.applyHistorySnapshot(next);
+    this.setMessage("Redo");
+    return true;
   }
 
   remember() {
-    this.history.push({
+    this.history.push(this.historySnapshot());
+    this.redoHistory = [];
+
+    if (this.history.length > 100) {
+      this.history.shift();
+    }
+  }
+
+  historySnapshot() {
+    return {
       nodes: this.nodes.map((node) => ({ ...node })),
       beams: this.beams.map((beam) => ({ ...beam })),
       selectedNode: this.selectedNode,
-    });
+    };
+  }
 
-    if (this.history.length > 50) {
-      this.history.shift();
+  applyHistorySnapshot(snapshot) {
+    this.nodes = snapshot.nodes.map((node) => ({ ...node }));
+    this.beams = snapshot.beams.map((beam) => ({ ...beam }));
+    this.selectedNode = Number.isInteger(snapshot.selectedNode) ? snapshot.selectedNode : null;
+    this.pointer = null;
+    this.hoverNode = null;
+    this.hoverBeam = null;
+  }
+
+  restore(snapshot, { remember = false, silent = false, allowOverBudget = false } = {}) {
+    const validation = this.validateSnapshot(snapshot, { allowOverBudget });
+    if (!validation.valid) {
+      if (!silent) {
+        this.setMessage(`Could not restore: ${validation.reason}`);
+      }
+      return false;
     }
+
+    if (remember) {
+      this.remember();
+    } else {
+      this.history = [];
+      this.redoHistory = [];
+    }
+
+    this.nodes = validation.nodes;
+    this.beams = validation.beams;
+    this.selectedNode = null;
+    this.pointer = null;
+    this.hoverNode = null;
+    this.hoverBeam = null;
+    if (!silent) {
+      this.setMessage("Bridge restored");
+    }
+    return true;
+  }
+
+  validateSnapshot(snapshot, { allowOverBudget = false } = {}) {
+    if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.beams)) {
+      return invalidSnapshot("invalid blueprint");
+    }
+
+    const anchors = this.level.anchors ?? [];
+    if (snapshot.nodes.length < anchors.length || snapshot.nodes.length > 600) {
+      return invalidSnapshot("invalid node count");
+    }
+    if (snapshot.beams.length > 1500) {
+      return invalidSnapshot("too many beams");
+    }
+
+    const nodes = [];
+    for (let index = 0; index < snapshot.nodes.length; index += 1) {
+      const source = snapshot.nodes[index];
+      if (!isFinitePoint(source)) {
+        return invalidSnapshot("invalid node");
+      }
+
+      if (index < anchors.length) {
+        const anchor = anchors[index];
+        if (distance(source, anchor) > NODE_MERGE_DISTANCE) {
+          return invalidSnapshot("anchors do not match this seed");
+        }
+        nodes.push({ x: anchor.x, y: anchor.y, fixed: true });
+        continue;
+      }
+
+      const node = { x: Number(source.x), y: Number(source.y), fixed: false };
+      const reason = this.placementReason(node);
+      if (reason) {
+        return invalidSnapshot(reason);
+      }
+      if (nodes.some((existing) => distance(existing, node) <= NODE_MERGE_DISTANCE)) {
+        return invalidSnapshot("overlapping nodes");
+      }
+      nodes.push(node);
+    }
+
+    const beamKeys = new Set();
+    const beams = [];
+    for (const source of snapshot.beams) {
+      const a = Number(source?.a);
+      const b = Number(source?.b);
+      if (
+        !Number.isInteger(a) ||
+        !Number.isInteger(b) ||
+        a < 0 ||
+        b < 0 ||
+        a >= nodes.length ||
+        b >= nodes.length ||
+        a === b
+      ) {
+        return invalidSnapshot("invalid beam connection");
+      }
+
+      const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (beamKeys.has(key) || distance(nodes[a], nodes[b]) < 8) {
+        return invalidSnapshot(beamKeys.has(key) ? "duplicate beam" : "beam too short");
+      }
+      const reason = this.beamPlacementReason(nodes[a], nodes[b]);
+      if (reason) {
+        return invalidSnapshot(reason);
+      }
+      const passThroughNode = nodes.some((node, nodeIndex) => {
+        if (nodeIndex === a || nodeIndex === b) {
+          return false;
+        }
+        const projection = closestPointOnSegment(node, nodes[a], nodes[b]);
+        return (
+          projection.t > SEGMENT_EPSILON &&
+          projection.t < 1 - SEGMENT_EPSILON &&
+          projection.distance <= SEGMENT_EPSILON
+        );
+      });
+      if (passThroughNode) {
+        return invalidSnapshot("beam must be split at existing node");
+      }
+      const unsplitCrossing = beams.some((beam) => {
+        if (
+          beam.a === a ||
+          beam.a === b ||
+          beam.b === a ||
+          beam.b === b
+        ) {
+          return false;
+        }
+        const intersection = segmentIntersection(
+          nodes[a],
+          nodes[b],
+          nodes[beam.a],
+          nodes[beam.b],
+        );
+        return intersection && isInteriorIntersection(intersection);
+      });
+      if (unsplitCrossing) {
+        return invalidSnapshot("crossing beams must share a node");
+      }
+
+      beamKeys.add(key);
+      beams.push({
+        a,
+        b,
+        deck: this.isDeckBeam(nodes[a], nodes[b]),
+      });
+    }
+
+    const cost = graphCost(nodes, beams, this.level.costs);
+    if (!allowOverBudget && this.enforceBudget && cost > this.level.budget + SEGMENT_EPSILON) {
+      return invalidSnapshot("over budget");
+    }
+
+    return { valid: true, nodes, beams, cost };
   }
 
   findNode(point, radius = NODE_RADIUS) {
@@ -611,7 +938,7 @@ export class BridgeEditor {
   }
 
   snapPoint(point) {
-    const snap = this.level.snap || 10;
+    const snap = this.level.snap;
     return {
       x: clamp(Math.round(point.x / snap) * snap, 0, this.level.canvas.width),
       y: clamp(Math.round(point.y / snap) * snap, 0, this.level.canvas.height),
@@ -735,4 +1062,153 @@ function closestPointOnSegment(point, a, b) {
     t,
     distance: distance(point, projected),
   };
+}
+
+function invalidSnapshot(reason) {
+  return { valid: false, reason };
+}
+
+function isFinitePoint(point) {
+  return Boolean(point) && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y));
+}
+
+function graphCost(nodes, beams, costs) {
+  const movableNodes = nodes.filter((node) => !node.fixed).length;
+  const beamTotal = beams.reduce((total, beam) => {
+    return total + distance(nodes[beam.a], nodes[beam.b]) * costs.beamPerPixel;
+  }, 0);
+  return movableNodes * costs.node + beamTotal;
+}
+
+function exclusionLabel(shape) {
+  if (shape.kind === "water" || shape.type === "water") {
+    return "underwater construction blocked";
+  }
+  if (shape.kind === "terrain" || shape.type === "terrain") {
+    return "inside terrain";
+  }
+  if (shape.kind === "vehicle") {
+    return "vehicle clearance blocked";
+  }
+  return "build area blocked";
+}
+
+function segmentEntersShape(from, to, shape) {
+  const polygon = shape?.points;
+  if (Array.isArray(polygon) && polygon.length >= 3) {
+    for (let index = 0; index < polygon.length; index += 1) {
+      const edgeStart = {
+        x: Number(polygon[index][0]),
+        y: Number(polygon[index][1]),
+      };
+      const next = polygon[(index + 1) % polygon.length];
+      const edgeEnd = { x: Number(next[0]), y: Number(next[1]) };
+      const intersection = segmentIntersection(from, to, edgeStart, edgeEnd);
+      if (
+        intersection &&
+        intersection.t > SEGMENT_EPSILON &&
+        intersection.t < 1 - SEGMENT_EPSILON
+      ) {
+        return true;
+      }
+    }
+  }
+
+  const length = distance(from, to);
+  const steps = clamp(Math.ceil(length / 4), 2, 400);
+  for (let index = 1; index < steps; index += 1) {
+    const t = index / steps;
+    const point = {
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+    };
+    if (shapeContainsPoint(shape, point, false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shapeContainsPoint(shape, point, includeBoundary) {
+  const points = shape?.points;
+  if (Array.isArray(points) && points.length >= 3) {
+    return pointInPolygon(point, points, includeBoundary);
+  }
+
+  const bounds = shape?.bounds ?? shape;
+  if (
+    Number.isFinite(Number(bounds?.x)) &&
+    Number.isFinite(Number(bounds?.y)) &&
+    Number.isFinite(Number(bounds?.width)) &&
+    Number.isFinite(Number(bounds?.height))
+  ) {
+    const left = Number(bounds.x);
+    const top = Number(bounds.y);
+    const right = left + Number(bounds.width);
+    const bottom = top + Number(bounds.height);
+    return includeBoundary
+      ? point.x >= left && point.x <= right && point.y >= top && point.y <= bottom
+      : point.x > left && point.x < right && point.y > top && point.y < bottom;
+  }
+
+  if (
+    Number.isFinite(Number(bounds?.x1)) &&
+    Number.isFinite(Number(bounds?.x2)) &&
+    Number.isFinite(Number(bounds?.y1)) &&
+    Number.isFinite(Number(bounds?.y2))
+  ) {
+    const left = Math.min(Number(bounds.x1), Number(bounds.x2));
+    const right = Math.max(Number(bounds.x1), Number(bounds.x2));
+    const top = Math.min(Number(bounds.y1), Number(bounds.y2));
+    const bottom = Math.max(Number(bounds.y1), Number(bounds.y2));
+    return includeBoundary
+      ? point.x >= left && point.x <= right && point.y >= top && point.y <= bottom
+      : point.x > left && point.x < right && point.y > top && point.y < bottom;
+  }
+
+  if (
+    Number.isFinite(Number(shape?.x)) &&
+    Number.isFinite(Number(shape?.y)) &&
+    Number.isFinite(Number(shape?.radius))
+  ) {
+    const radius = Number(shape.radius);
+    const pointDistance = Math.hypot(point.x - Number(shape.x), point.y - Number(shape.y));
+    return includeBoundary ? pointDistance <= radius : pointDistance < radius;
+  }
+
+  return false;
+}
+
+function pointInPolygon(point, points, includeBoundary) {
+  let inside = false;
+  for (let index = 0, previous = points.length - 1; index < points.length; previous = index, index += 1) {
+    const a = arrayPoint(points[previous]);
+    const b = arrayPoint(points[index]);
+    if (!a || !b) {
+      continue;
+    }
+
+    const projection = closestPointOnSegment(point, a, b);
+    if (projection.distance <= SEGMENT_EPSILON) {
+      return includeBoundary;
+    }
+
+    const crosses =
+      (a.y > point.y) !== (b.y > point.y) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function arrayPoint(point) {
+  if (Array.isArray(point) && point.length >= 2) {
+    return { x: Number(point[0]), y: Number(point[1]) };
+  }
+  if (isFinitePoint(point)) {
+    return { x: Number(point.x), y: Number(point.y) };
+  }
+  return null;
 }

@@ -1,89 +1,70 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_MODULES = {
+    "blueprint.js",
+    "capacity.js",
+    "editor.js",
+    "generator.js",
+    "levels.js",
+    "main.js",
+    "physics.js",
+    "renderer.js",
+    "ui.js",
+}
 
 
 def read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_root_index_is_github_pages_entrypoint():
+def test_root_is_a_single_canvas_static_app():
     index = read("index.html")
 
-    assert "{%" not in index
+    assert index.count("<canvas") == 1
     assert 'id="game-canvas"' in index
-    assert 'id="seed-input"' in index
-    assert "data-random" + "-level-url" not in index
-    assert 'href="static/game/css/style.css?v=landscape10"' in index
-    assert 'src="static/game/js/main.js?v=landscape10"' in index
+    assert 'class="game-toolbar"' in index
+    assert 'id="mode-select"' in index
+    assert 'id="capacity-button"' in index
+    assert 'id="live-status"' in index
+    assert 'type="module"' in index
+    assert "{%" not in index
 
 
-def test_javascript_generates_levels_without_fetching_json():
-    levels = read("static/game/js/levels.js")
-    main = read("static/game/js/main.js")
+def test_runtime_module_graph_is_complete_and_local():
+    module_dir = ROOT / "static" / "game" / "js"
+    assert {path.name for path in module_dir.glob("*.js")} == RUNTIME_MODULES
 
-    assert 'from "./generator.js?v=landscape10"' in levels
-    assert "generateRandomLevel" in levels
-    assert "fe" + "tch(" not in levels
-    assert "randomLevelUrl" not in main
-    assert "levelUrl(" not in main
-    assert "updateSeedInLocation" in main
+    source = "\n".join(path.read_text(encoding="utf-8") for path in module_dir.glob("*.js"))
+    assert "fetch(" not in source
+    assert "XMLHttpRequest" not in source
+    assert "WebSocket" not in source
 
 
-def test_generator_exports_static_procedural_level_schema():
+def test_current_gameplay_contracts_are_declared():
     generator = read("static/game/js/generator.js")
+    physics = read("static/game/js/physics.js")
+    capacity = read("static/game/js/capacity.js")
 
-    assert "export function generateRandomLevel" in generator
-    assert "export function normalizeSeed" in generator
-    assert 'name: "superformula"' in generator
-    for key in [
-        "canvas",
-        "terrain",
-        "waterBodies",
-        "anchorPlatforms",
-        "groundSegments",
-        "vehicle",
-        "physics",
-        "backdrop",
-        "details",
+    assert "export const GENERATOR_VERSION" in generator
+    assert "solverCertified" in generator
+    assert "export const PHYSICS_VERSION" in physics
+    assert "export const SIMULATION_DT = 1 / 120" in physics
+    assert "export class CapacitySearch" in capacity
+
+
+def test_python_is_test_tooling_only():
+    assert not list(ROOT.glob("*.py"))
+    assert not list((ROOT / "static").rglob("*.py"))
+    assert "Python is development tooling only" in read("AGENTS.md")
+    assert "no Python runtime" in read("README.md")
+
+
+def test_no_node_or_bundler_metadata_is_present():
+    for path in [
+        "package.json",
+        "package-lock.json",
+        "vite.config.js",
+        "webpack.config.js",
     ]:
-        assert key in generator
-
-
-def test_legacy_runtime_files_are_removed():
-    removed_paths = [
-        "manage" + ".py",
-        "bridgebuilder" + "_site",
-        "game",
-    ]
-
-    for path in removed_paths:
         assert not (ROOT / path).exists()
-
-
-def test_docs_and_tooling_are_static_site_focused():
-    docs = "\n".join(
-        [
-            read("README.md"),
-            read("AGENTS.md"),
-            read("environment.yml"),
-            read("pyproject.toml"),
-            read(".gitignore"),
-        ]
-    )
-
-    for stale_text in [
-        "Djan" + "go",
-        "run" + "server",
-        "pytest-" + "djan" + "go",
-        "db.sql" + "ite3",
-        "levels" + "/random",
-        "game" + "/static",
-    ]:
-        assert stale_text not in docs
-
-
-def test_no_node_or_bundler_metadata_is_added():
-    assert not (ROOT / "package.json").exists()
-    assert not (ROOT / "package-lock.json").exists()
-    assert not (ROOT / "vite.config.js").exists()
