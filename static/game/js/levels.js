@@ -2,7 +2,7 @@ import {
   GENERATOR_VERSION,
   generateRandomLevel,
   normalizeSeed,
-} from "./generator.js?v=challenge2";
+} from "./generator.js?v=challenge3";
 
 export { GENERATOR_VERSION, normalizeSeed };
 
@@ -28,7 +28,6 @@ export function validateLevel(level) {
     "waterBodies",
     "hazards",
     "buildExclusions",
-    "navigationClearances",
     "anchors",
     "start",
     "goal",
@@ -137,9 +136,9 @@ function validateChallenge(level) {
     throw new Error("Level challenge fingerprint or reference cost is invalid");
   }
 
-  const budgetHeadroom = level.budget - challenge.referenceCost * 1.25;
-  if (budgetHeadroom < 0 || budgetHeadroom >= 50) {
-    throw new Error("Level budget must be the rounded 125% reference cost");
+  const targetHeadroom = level.budget - challenge.referenceCost * 1.25;
+  if (targetHeadroom < 0 || targetHeadroom >= 50) {
+    throw new Error("Level cost target must be the rounded 125% reference cost");
   }
 
   if (
@@ -234,10 +233,7 @@ function validateGeometry(level) {
 function validateConstructionContract(level) {
   if (
     !Array.isArray(level.buildExclusions) ||
-    !level.buildExclusions.every(isPolygon) ||
-    !Array.isArray(level.navigationClearances) ||
-    level.navigationClearances.length === 0 ||
-    !level.navigationClearances.every(isPolygon)
+    !level.buildExclusions.every(isPolygon)
   ) {
     throw new Error("Level construction boundaries are invalid");
   }

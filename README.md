@@ -4,9 +4,10 @@ A static browser-based bridge-building game inspired by classic Bridge Builder p
 game runs from GitHub Pages: root HTML, static CSS, vanilla JavaScript, and one HTML5 Canvas.
 
 The editor, renderer, deterministic physics simulation, capacity search, persistence, and procedural
-level generator all run in the browser. Challenge mode asks you to pass a seed's rated load under
-budget, then certifies the maximum load the unchanged bridge can carry. Sandbox mode remains
-available for unrestricted building.
+level generator all run in the browser. Challenge mode asks you to pass a seed's rated load, then
+certifies the maximum load the unchanged bridge can carry. Every challenge also has an attainable
+cost target, but it never blocks building or testing: certified load ranks first and lower cost
+breaks ties. Sandbox mode remains available for unranked building.
 
 ## GitHub Pages
 
@@ -37,6 +38,36 @@ Deployment checklist:
 - Push to `main`.
 - Wait for the GitHub Pages publish step to finish.
 - Open the project page and verify a seed URL renders the canvas.
+
+## Analytics and Top Scores
+
+The GoatCounter script in `index.html` records ordinary site visits for
+`bridgebuilder.goatcounter.com`. A canonical page URL keeps seed and blueprint query strings from
+becoming separate analytics pages. Analytics is optional: the script is asynchronous, and a blocked
+or unavailable GoatCounter endpoint cannot delay game startup.
+
+A Challenge bridge earns a global cost entry only when it carries the seed's rated load without
+exceeding its cost target. The browser submits the event name below after the successful crossing:
+
+```text
+bridgebuilder-cost/v1/{generatorVersion}/{physicsVersion}/{ratedLoad}/{seed}/{cost}
+```
+
+Sandbox, failed, under-rated, capacity, and over-target tests are excluded. A versioned local
+minimum prevents equal or more expensive results from being reported again.
+
+The `Update leaderboard` GitHub Action runs daily at 02:23 UTC and can also be started manually. It
+incrementally reads new GoatCounter paths, retains the lowest cost for each current-version seed,
+and atomically publishes the best 100 to `static/data/leaderboard.json`. Configure it once:
+
+1. Create a GoatCounter API token for the `bridgebuilder` site with permission to read paths.
+2. Add it to the GitHub repository as the Actions secret `GOATCOUNTER_API_TOKEN`.
+3. In the repository Actions settings, allow workflows to write repository contents.
+
+The action requests a Pages rebuild after committing a changed snapshot. If GoatCounter, its API,
+or the token is unavailable, the action fails before replacing the existing snapshot. The game
+loads the snapshot only when Top Scores is opened and shows `Leaderboard unavailable` for any
+network, timeout, schema, or version failure.
 
 ## Procedural Challenge Gallery
 
@@ -97,7 +128,7 @@ r(phi) = (
 ```
 
 Mechanical and cosmetic random streams are separate, so scenery changes cannot alter a challenge's
-geometry, load, budget, or fingerprint. Four mechanical archetypes are generated:
+geometry, load, cost target, or fingerprint. Four mechanical archetypes are generated:
 
 - open bank span
 - asymmetric shelf gorge
@@ -106,10 +137,12 @@ geometry, load, budget, or fingerprint. Four mechanical archetypes are generated
 
 Each site is calibrated around a hidden, constructible reference truss. Generation replays the
 reference and an unsupported deck through the deterministic solver, rejecting the candidate unless
-the truss passes its rated load and the bare deck fails. Its budget is the reference cost plus 25%
-headroom. The seven visual biomes add independent shore and riverbed shapes, palettes, animated
+the truss passes its rated load and the bare deck fails. The advisory cost target is the reference
+cost plus 25% headroom, so every accepted puzzle has a known solution below the target. Players may
+continue building, test, share, and certify capacity above it; the HUD and results report the
+overrun. The seven visual biomes add independent shore and riverbed shapes, palettes, animated
 water, reeds, ridgelines, and small effects using Canvas primitives only. Explicit terrain, water,
-exclusion, and clearance polygons are shared by rendering, editing, and collision.
+hazard, and build-exclusion polygons keep rendering, editing, and collision aligned.
 
 Generation is intentionally small enough to stay on the main thread. The expensive work during play
 is still the per-frame canvas rendering and bridge simulation, not creating a seeded level.
@@ -190,7 +223,7 @@ The three compatibility versions are deliberate:
 - `PHYSICS_VERSION` isolates comparable capacity records.
 - `BLUEPRINT_VERSION` isolates drafts, records, and shared design payloads.
 
-When deployed module behavior changes, keep the `?v=challenge2` browser cache tags coordinated.
+When deployed module behavior changes, keep the `?v=challenge3` browser cache tags coordinated.
 
 ## Structure
 
@@ -202,7 +235,14 @@ When deployed module behavior changes, keep the `?v=challenge2` browser cache ta
 |-- environment.yml
 |-- index.html
 |-- pyproject.toml
+|-- .github/
+|   |-- scripts/
+|   |   `-- update-leaderboard.ps1
+|   `-- workflows/
+|       `-- update-leaderboard.yml
 |-- static/
+|   |-- data/
+|   |   `-- leaderboard.json
 |   `-- game/
 |       |-- css/
 |       |   `-- style.css
@@ -211,6 +251,7 @@ When deployed module behavior changes, keep the `?v=challenge2` browser cache ta
 |           |-- blueprint.js
 |           |-- capacity.js
 |           |-- generator.js
+|           |-- leaderboard.js
 |           |-- levels.js
 |           |-- main.js
 |           |-- physics.js
@@ -226,5 +267,6 @@ When deployed module behavior changes, keep the `?v=challenge2` browser cache ta
     |-- app_runner.html
     |-- browser_runner.html
     |-- test_browser_game.py
+    |-- test_leaderboard_workflow.py
     `-- test_static_site.py
 ```

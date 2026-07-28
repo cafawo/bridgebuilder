@@ -32,6 +32,15 @@
         generateReferenceBridge,
       } from "../static/game/js/generator.js";
       import {
+        challengeSeedUrl,
+        costEventPath,
+        fetchLeaderboard,
+        qualifyingCostRecord,
+        reportedCostKey,
+        submitCostScore,
+        validateLeaderboard,
+      } from "../static/game/js/leaderboard.js";
+      import {
         BridgeSimulation,
         PHYSICS_VERSION,
         SIMULATION_DT,
@@ -78,7 +87,6 @@
       function editorFixture({
         budget = 100000,
         buildExclusions = [],
-        navigationClearances = [],
       } = {}) {
         const generated = generateRandomLevel("browser-editor-fixture");
         return {
@@ -94,7 +102,6 @@
           waterBodies: [],
           hazards: [],
           buildExclusions,
-          navigationClearances,
         };
       }
 
@@ -222,13 +229,13 @@
           const reference = generateReferenceBridge(level.seed, { certify: false });
           assert(
             level.budget >= level.challenge.referenceCost * 1.25,
-            "budget must cover 125 percent of reference cost",
+            "cost target must cover 125 percent of reference cost",
           );
           assert(
             Math.abs(reference.cost - level.challenge.referenceCost) < 1,
             "reference cost is not reproducible",
           );
-          assert(reference.cost <= level.budget, "reference exceeds budget");
+          assert(reference.cost <= level.budget, "reference exceeds cost target");
           const editor = new BridgeEditor(level);
           const referenceValidation = editor.validateSnapshot(reference);
           assert(
@@ -321,7 +328,7 @@
               Math.abs(reference.cost - level.challenge.referenceCost) < 1,
               "reference cost changed between generation and certification",
             );
-            assert(reference.cost <= level.budget, "reference bridge exceeds budget");
+            assert(reference.cost <= level.budget, "reference bridge exceeds cost target");
             const referenceEditor = new BridgeEditor(level);
             const validation = referenceEditor.validateSnapshot(reference);
             let validationDetail = validation.reason ?? "unknown";
@@ -388,10 +395,8 @@
           ],
           terrain: [],
           buildExclusions: [],
-          navigationClearances: [],
         };
         const editor = new BridgeEditor(level);
-        editor.setBudgetEnforced(false);
         const candidate = { x: 160, y: 160 };
         editor.selectedNode = 0;
         editor.handleEmptyClick(candidate);
@@ -408,28 +413,38 @@
         assert(editor.restore(graph), "valid graph could not be restored");
       });
 
-      test("editor accepts the exact budget boundary and rejects the next purchase", () => {
+      test("cost target is advisory for previews, edits, and restored bridges", () => {
         const level = editorFixture({ budget: 150 });
         const editor = new BridgeEditor(level);
         editor.selectedNode = 0;
         editor.handleEmptyClick({ x: 160, y: 100 });
-        equal(editor.nodes.length, 3, "node at exact budget was rejected");
-        equal(editor.beams.length, 1, "beam at exact budget was rejected");
+        equal(editor.nodes.length, 3, "node at exact target was rejected");
+        equal(editor.beams.length, 1, "beam at exact target was rejected");
         assert(
           Math.abs(editor.totalCost() - level.budget) < 0.001,
-          "exact budget did not produce zero headroom",
+          "exact target cost was not reproducible",
         );
-        assert(Math.abs(editor.remainingBudget()) < 0.001, "remaining budget was not zero");
+        assert(Math.abs(editor.targetDelta()) < 0.001, "target delta was not zero");
+
+        editor.setPointer({ x: 220, y: 100 });
+        const preview = editor.previewBeam();
+        assert(preview.valid, "over-target preview was marked invalid");
+        assert(preview.overTargetAmount > 0, "preview did not report its target overrun");
 
         editor.handleEmptyClick({ x: 220, y: 100 });
-        equal(editor.nodes.length, 3, "over-budget node was added");
-        equal(editor.beams.length, 1, "over-budget beam was added");
-        assert(editor.message.includes("Budget"), "over-budget edit did not explain rejection");
+        equal(editor.nodes.length, 4, "over-target node was rejected");
+        equal(editor.beams.length, 2, "over-target beam was rejected");
+        assert(editor.targetDelta() < 0, "over-target bridge did not have a negative delta");
+        assert(editor.overTargetAmount() > 0, "over-target amount was not reported");
+        assert(editor.message.includes("over target"), "over-target edit was not announced");
 
-        editor.setBudgetEnforced(false);
-        editor.handleEmptyClick({ x: 220, y: 100 });
-        equal(editor.nodes.length, 4, "sandbox budget bypass did not allow construction");
-        equal(editor.beams.length, 2, "sandbox beam was not added");
+        const snapshot = editor.snapshot();
+        const restored = new BridgeEditor(level);
+        assert(restored.restore(snapshot), "over-target bridge could not be restored");
+        assert(
+          restored.totalCost() > level.budget,
+          "restored bridge did not preserve its over-target cost",
+        );
       });
 
       test("editor splits interactive crossings and rejects unsplit shared graphs", () => {
@@ -479,7 +494,7 @@
         assert(passThrough.reason.includes("split"), "pass-through rejection reason was unclear");
       });
 
-      test("editor consumes physical exclusions and navigation clearances", () => {
+      test("editor blocks physical exclusions but permits overhead structures", () => {
         const solid = {
           id: "test-solid",
           kind: "terrain",
@@ -491,21 +506,7 @@
             [150, 220],
           ],
         };
-        const clearance = {
-          id: "test-clearance",
-          kind: "vehicle",
-          reason: "test clearance blocked",
-          points: [
-            [150, 40],
-            [250, 40],
-            [250, 80],
-            [150, 80],
-          ],
-        };
-        const level = editorFixture({
-          buildExclusions: [solid],
-          navigationClearances: [clearance],
-        });
+        const level = editorFixture({ buildExclusions: [solid] });
         const editor = new BridgeEditor(level);
         equal(editor.placementReason({ x: 200, y: 160 }), solid.reason);
         const initialNodeCount = editor.nodes.length;
@@ -517,15 +518,13 @@
           { x: 300, y: 100, fixed: true },
           { x: 100, y: 160, fixed: false },
           { x: 300, y: 160, fixed: false },
+          { x: 100, y: 60, fixed: false },
+          { x: 300, y: 60, fixed: false },
         ];
         assert(editor.restore({ nodes, beams: [] }), "exclusion fixture could not be restored");
         assert(!editor.addBeam(2, 3), "beam through terrain was accepted");
         equal(editor.message, solid.reason);
-        equal(
-          editor.beamPlacementReason({ x: 100, y: 60 }, { x: 300, y: 60 }),
-          clearance.reason,
-          "vehicle clearance did not block a crossing beam",
-        );
+        assert(editor.addBeam(4, 5), "overhead beam was rejected");
 
         const sharedLevel = editorFixture({ buildExclusions: [solid] });
         const sharedGraph = {
@@ -740,6 +739,148 @@
           ),
           "higher cost won an equal-load tie",
         );
+      });
+
+      test("minimum-cost submissions are qualified, versioned, deduplicated, and optional", () => {
+        const base = {
+          gameMode: "challenge",
+          won: true,
+          testLoad: 9000,
+          requiredLoad: 9000,
+          cost: 1200,
+          maximumCost: 2000,
+          seed: "browser-cost-score",
+          generatorVersion: GENERATOR_VERSION,
+          physicsVersion: PHYSICS_VERSION,
+        };
+        equal(qualifyingCostRecord({ ...base, gameMode: "sandbox" }), null);
+        equal(qualifyingCostRecord({ ...base, won: false }), null);
+        equal(qualifyingCostRecord({ ...base, testLoad: 8950 }), null);
+        equal(qualifyingCostRecord({ ...base, cost: 2001 }), null);
+
+        const record = qualifyingCostRecord(base);
+        assert(record, "qualifying cost record was rejected");
+        equal(
+          costEventPath(record),
+          "bridgebuilder-cost/v1/2.0.0/2.0.0/9000/browser-cost-score/1200",
+        );
+        equal(
+          reportedCostKey(record),
+          "bridgebuilder:reported-cost:v1:2.0.0:2.0.0:9000:browser-cost-score",
+        );
+
+        const values = new Map();
+        const storage = {
+          getItem: (key) => values.get(key) ?? null,
+          setItem: (key, value) => values.set(key, value),
+        };
+        const events = [];
+        equal(
+          submitCostScore(record, { counter: null, storage }),
+          false,
+          "missing GoatCounter reported success",
+        );
+        assert(
+          submitCostScore(record, {
+            counter: { count: (event) => events.push(event) },
+            storage,
+          }),
+          "first qualifying score was not sent",
+        );
+        equal(events.length, 1);
+        equal(events[0].event, true);
+        equal(submitCostScore(record, {
+          counter: { count: (event) => events.push(event) },
+          storage,
+        }), false, "equal cost was sent twice");
+        equal(submitCostScore({ ...record, cost: 1300 }, {
+          counter: { count: (event) => events.push(event) },
+          storage,
+        }), false, "higher cost replaced a lower cost");
+        assert(submitCostScore({ ...record, cost: 900 }, {
+          counter: { count: (event) => events.push(event) },
+          storage,
+        }), "lower cost was not sent");
+        equal(events.length, 2);
+        equal(events[1].path.endsWith("/900"), true);
+
+        equal(submitCostScore({ ...record, cost: 800 }, {
+          counter: { count: () => { throw new Error("offline"); } },
+          storage,
+        }), false, "throwing GoatCounter reported success");
+        assert(submitCostScore({ ...record, cost: 800 }, {
+          counter: { count: (event) => events.push(event) },
+          storage,
+        }), "failed submission incorrectly consumed the lower score");
+      });
+
+      test("leaderboard data is validated, reduced, sorted, and safe to navigate", async () => {
+        const entries = Array.from({ length: 105 }, (_, index) => ({
+          seed: `board-${String(index).padStart(3, "0")}`,
+          cost: 1000 + index,
+          requiredLoad: 9000,
+        }));
+        entries.push({ seed: "board-010", cost: 500, requiredLoad: 9000 });
+        const data = validateLeaderboard(
+          {
+            schemaVersion: 1,
+            generatedAt: "2026-07-28T02:23:00Z",
+            generatorVersion: GENERATOR_VERSION,
+            physicsVersion: PHYSICS_VERSION,
+            entries,
+          },
+          GENERATOR_VERSION,
+          PHYSICS_VERSION,
+        );
+        equal(data.entries.length, 100);
+        equal(data.entries[0].seed, "board-010");
+        equal(data.entries[0].cost, 500);
+        expectThrows(
+          () => validateLeaderboard(
+            {
+              ...data,
+              generatorVersion: "old",
+            },
+            GENERATOR_VERSION,
+            PHYSICS_VERSION,
+          ),
+          "old-version leaderboard was accepted",
+        );
+        expectThrows(
+          () => validateLeaderboard(
+            {
+              ...data,
+              entries: [{ seed: "<script>", cost: 1, requiredLoad: 9000 }],
+            },
+            GENERATOR_VERSION,
+            PHYSICS_VERSION,
+          ),
+          "invalid seed was accepted",
+        );
+
+        const destination = new URL(
+          challengeSeedUrl(
+            "board-010",
+            "https://example.test/bridgebuilder/?seed=old&mode=sandbox#design=bad",
+          ),
+        );
+        equal(destination.searchParams.get("seed"), "board-010");
+        equal(destination.searchParams.has("mode"), false);
+        equal(destination.hash, "");
+
+        let rejected = false;
+        try {
+          await fetchLeaderboard({
+            generatorVersion: GENERATOR_VERSION,
+            physicsVersion: PHYSICS_VERSION,
+            fetchImpl: async () => {
+              throw new Error("offline");
+            },
+          });
+        } catch {
+          rejected = true;
+        }
+        assert(rejected, "leaderboard network failure was not isolated");
       });
 
       test("empty and unsupported bridges lose while the reference truss passes", () => {

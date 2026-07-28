@@ -1,4 +1,4 @@
-import { clamp } from "./ui.js?v=challenge2";
+import { clamp } from "./ui.js?v=challenge3";
 
 const NODE_RADIUS = 12;
 const BEAM_PICK_DISTANCE = 18;
@@ -9,7 +9,6 @@ const SEGMENT_EPSILON = 0.001;
 export class BridgeEditor {
   constructor(level) {
     this.level = level;
-    this.enforceBudget = true;
     this.nodes = [];
     this.beams = [];
     this.selectedNode = null;
@@ -47,11 +46,6 @@ export class BridgeEditor {
     }
   }
 
-  setBudgetEnforced(enforced) {
-    this.enforceBudget = Boolean(enforced);
-    return this.enforceBudget;
-  }
-
   hasUserStructure() {
     return this.beams.length > 0 || this.nodes.some((node) => !node.fixed);
   }
@@ -73,8 +67,12 @@ export class BridgeEditor {
     return movableNodes * nodeCost + beamTotal;
   }
 
-  remainingBudget(previewCost = 0) {
+  targetDelta(previewCost = 0) {
     return this.level.budget - this.totalCost() - previewCost;
+  }
+
+  overTargetAmount(previewCost = 0) {
+    return Math.max(0, -this.targetDelta(previewCost));
   }
 
   canUndo() {
@@ -170,7 +168,7 @@ export class BridgeEditor {
         });
     const nodeCost = targetNode === null ? this.level.costs.node : 0;
     const cost = nodeCost + plan.cost;
-    const reason = this.previewReason(length, existing, cost, from, hover, targetNode === null);
+    const reason = this.previewReason(length, existing, from, hover, targetNode === null);
     const splitPoints = splitBeam ? [hover] : [];
     splitPoints.push(...plan.crossings.map((crossing) => crossing.point));
 
@@ -185,11 +183,12 @@ export class BridgeEditor {
       reason,
       cost,
       projectedCost: this.totalCost() + cost,
-      remainingBudget: this.remainingBudget(cost),
+      targetDelta: this.targetDelta(cost),
+      overTargetAmount: this.overTargetAmount(cost),
     };
   }
 
-  previewReason(length, existing, cost, from, to, createsNode = true) {
+  previewReason(length, existing, from, to, createsNode = true) {
     if (length < 8) {
       return "too short";
     }
@@ -203,9 +202,6 @@ export class BridgeEditor {
     const beamReason = this.beamPlacementReason(from, to);
     if (beamReason) {
       return beamReason;
-    }
-    if (this.wouldExceedBudget(cost)) {
-      return "over budget";
     }
     return "";
   }
@@ -311,9 +307,6 @@ export class BridgeEditor {
       return;
     }
 
-    const newNodeCost = this.level.costs.node;
-    let extraCost = newNodeCost;
-
     if (this.selectedNode !== null) {
       const selected = this.nodes[this.selectedNode];
       const beamLength = distance(selected, point);
@@ -325,12 +318,6 @@ export class BridgeEditor {
         this.setMessage(beamReason);
         return;
       }
-      extraCost += this.planBeamPath(this.selectedNode, point).cost;
-    }
-
-    if (this.wouldExceedBudget(extraCost)) {
-      this.setMessage("Budget exceeded");
-      return;
     }
 
     this.remember();
@@ -347,7 +334,7 @@ export class BridgeEditor {
     }
 
     this.selectedNode = newIndex;
-    this.setMessage("Node placed");
+    this.setBuildMessage("Node placed");
   }
 
   handleBeamClick(beamHit) {
@@ -358,22 +345,12 @@ export class BridgeEditor {
 
     const selected = this.selectedNode;
     const shouldConnect = selected !== null && selected !== beam.a && selected !== beam.b;
-    const splitCost = this.level.costs.node;
-    const connectPlan = shouldConnect
-      ? this.planBeamPath(selected, beamHit.point, { ignoredBeamIndex: beamHit.index })
-      : null;
-    const connectCost = connectPlan ? connectPlan.cost : 0;
 
     if (
       shouldConnect &&
       this.beamPlacementReason(this.nodes[selected], beamHit.point)
     ) {
       this.setMessage(this.beamPlacementReason(this.nodes[selected], beamHit.point));
-      return;
-    }
-
-    if (this.wouldExceedBudget(splitCost + connectCost)) {
-      this.setMessage("Budget exceeded");
       return;
     }
 
@@ -386,7 +363,7 @@ export class BridgeEditor {
     }
 
     this.selectedNode = newIndex;
-    this.setMessage(shouldConnect ? "Beam split and connected" : "Beam split");
+    this.setBuildMessage(shouldConnect ? "Beam split and connected" : "Beam split");
   }
 
   addBeam(a, b) {
@@ -407,14 +384,9 @@ export class BridgeEditor {
     }
 
     const plan = this.planBeamPath(a, this.nodes[b], { targetNode: b });
-    const extraCost = plan.cost;
-    if (this.wouldExceedBudget(extraCost)) {
-      this.setMessage("Budget exceeded");
-      return false;
-    }
-
     this.remember();
     this.applyBeamPathPlan(a, b, plan);
+    this.setBuildMessage("Beam placed");
     return true;
   }
 
@@ -548,10 +520,6 @@ export class BridgeEditor {
     return true;
   }
 
-  wouldExceedBudget(extraCost = 0) {
-    return this.enforceBudget && this.totalCost() + extraCost > this.level.budget + SEGMENT_EPSILON;
-  }
-
   placementReason(point) {
     if (!isFinitePoint(point)) {
       return "invalid position";
@@ -594,10 +562,7 @@ export class BridgeEditor {
       return blocked.reason || exclusionLabel(blocked);
     }
 
-    const clearance = (this.level.navigationClearances ?? []).find((shape) => {
-      return segmentEntersShape(from, to, shape);
-    });
-    return clearance ? clearance.reason || "vehicle clearance blocked" : "";
+    return "";
   }
 
   canSplitBeam(beamHit, beam) {
@@ -769,8 +734,8 @@ export class BridgeEditor {
     this.hoverBeam = null;
   }
 
-  restore(snapshot, { remember = false, silent = false, allowOverBudget = false } = {}) {
-    const validation = this.validateSnapshot(snapshot, { allowOverBudget });
+  restore(snapshot, { remember = false, silent = false } = {}) {
+    const validation = this.validateSnapshot(snapshot);
     if (!validation.valid) {
       if (!silent) {
         this.setMessage(`Could not restore: ${validation.reason}`);
@@ -797,7 +762,7 @@ export class BridgeEditor {
     return true;
   }
 
-  validateSnapshot(snapshot, { allowOverBudget = false } = {}) {
+  validateSnapshot(snapshot) {
     if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.beams)) {
       return invalidSnapshot("invalid blueprint");
     }
@@ -905,12 +870,12 @@ export class BridgeEditor {
       });
     }
 
-    const cost = graphCost(nodes, beams, this.level.costs);
-    if (!allowOverBudget && this.enforceBudget && cost > this.level.budget + SEGMENT_EPSILON) {
-      return invalidSnapshot("over budget");
-    }
-
-    return { valid: true, nodes, beams, cost };
+    return {
+      valid: true,
+      nodes,
+      beams,
+      cost: graphCost(nodes, beams, this.level.costs),
+    };
   }
 
   findNode(point, radius = NODE_RADIUS) {
@@ -948,6 +913,15 @@ export class BridgeEditor {
   setMessage(message) {
     this.message = message;
     this.messageUntil = performance.now() + 1400;
+  }
+
+  setBuildMessage(message) {
+    const overTarget = this.overTargetAmount();
+    this.setMessage(
+      overTarget > SEGMENT_EPSILON
+        ? `${message} · ${Math.ceil(overTarget)} over target`
+        : message,
+    );
   }
 }
 
@@ -1086,9 +1060,6 @@ function exclusionLabel(shape) {
   }
   if (shape.kind === "terrain" || shape.type === "terrain") {
     return "inside terrain";
-  }
-  if (shape.kind === "vehicle") {
-    return "vehicle clearance blocked";
   }
   return "build area blocked";
 }

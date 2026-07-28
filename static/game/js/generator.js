@@ -2,7 +2,7 @@ import {
   BridgeSimulation,
   PHYSICS_VERSION,
   SIMULATION_DT,
-} from "./physics.js?v=challenge2";
+} from "./physics.js?v=challenge3";
 
 export const GENERATOR_VERSION = "2.0.0";
 
@@ -293,7 +293,6 @@ export function generateRandomLevel(seed, options = {}) {
     terrain: geometry.terrain,
     hazards: buildHazards(geometry.terrain, waterBodies),
     buildExclusions: buildExclusions(geometry.terrain, waterBodies),
-    navigationClearances: buildNavigationClearances(mechanics),
     groundSegments: geometry.groundSegments,
     anchors: buildAnchors(geometry.anchorPlatforms),
     start: {
@@ -1206,21 +1205,6 @@ function buildExclusions(terrain, waterBodies) {
       reason: "submerged construction",
       points: clonePoints(body.points),
     })),
-  ];
-}
-
-function buildNavigationClearances(mechanics) {
-  return [
-    {
-      id: "train-envelope",
-      kind: "vehicle",
-      points: [
-        [mechanics.leftEdge - 18, mechanics.roadY - 52],
-        [mechanics.rightEdge + 18, mechanics.roadY - 52],
-        [mechanics.rightEdge + 18, mechanics.roadY - 9],
-        [mechanics.leftEdge - 18, mechanics.roadY - 9],
-      ],
-    },
   ];
 }
 

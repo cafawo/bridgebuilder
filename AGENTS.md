@@ -23,18 +23,22 @@
 - Capacity results must be replay-certified. Never trust a score embedded in a
   URL, draft, or imported blueprint.
 - Keep mechanical and cosmetic random streams separate. Cosmetic changes must
-  not alter geometry, rated load, budget, fingerprint, or score.
-- Terrain, water, hazards, build exclusions, and navigation clearances must come
-  from explicit shared geometry so rendering, editing, and collision agree.
-- Preserve the four mechanical archetypes, seven biome regimes, budgeted
-  reference designs, failure-first outcome ordering, and genuine-bracing checks.
+  not alter geometry, rated load, cost target, fingerprint, or score.
+- Cost targets are advisory efficiency benchmarks. Never block construction,
+  testing, blueprint restoration, sharing, or capacity certification above them;
+  report overruns clearly and use lower cost to break equal-load ties.
+- Terrain, water, hazards, and build exclusions must come from explicit shared
+  geometry so rendering, editing, and collision agree.
+- Preserve the four mechanical archetypes, seven biome regimes,
+  solver-certified reference designs, failure-first outcome ordering, and
+  genuine-bracing checks.
 
 ## Versioning and persistence
 
 - `GENERATOR_VERSION`, `PHYSICS_VERSION`, and `BLUEPRINT_VERSION` define scoring
   and persistence compatibility. Change them intentionally when a change makes
   old scores or blueprints non-comparable.
-- Keep browser cache tags such as `?v=challenge2` coordinated when deployed
+- Keep browser cache tags such as `?v=challenge3` coordinated when deployed
   module behavior changes.
 - Drafts and records must remain isolated by generator version, physics version,
   seed fingerprint, and mode.

@@ -4,7 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bridge Builder</title>
-    <link rel="stylesheet" href="static/game/css/style.css?v=challenge2">
+    <link rel="canonical" href="https://cafawo.github.io/bridgebuilder/">
+    <link rel="stylesheet" href="static/game/css/style.css?v=challenge3">
   </head>
   <body>
     <main class="game-shell">
@@ -16,6 +17,7 @@
           </label>
           <button type="submit">Load</button>
           <button type="button" id="random-seed-button">Random</button>
+          <button type="button" id="leaderboard-button">Top Scores</button>
           <label class="mode-field" for="mode-select">
             <span>Mode</span>
             <select id="mode-select" name="mode">
@@ -94,12 +96,52 @@
             <button type="button" id="share-button">Share</button>
           </div>
         </section>
+
+        <section
+          class="leaderboard-panel"
+          id="leaderboard-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leaderboard-title"
+          aria-describedby="leaderboard-status leaderboard-updated"
+          hidden
+        >
+          <div class="leaderboard-card">
+            <header class="leaderboard-header">
+              <div>
+                <p class="result-eyebrow">Community records</p>
+                <h1 id="leaderboard-title">Top Scoring Seeds</h1>
+              </div>
+              <button type="button" id="leaderboard-close-button" aria-label="Close leaderboard">
+                Close
+              </button>
+            </header>
+            <p id="leaderboard-status" role="status">Loading leaderboard…</p>
+            <div class="leaderboard-scroll">
+              <table id="leaderboard-table" hidden>
+                <thead>
+                  <tr>
+                    <th scope="col">Seed</th>
+                    <th scope="col">Best Cost</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboard-body"></tbody>
+              </table>
+            </div>
+            <p id="leaderboard-updated"></p>
+          </div>
+        </section>
       </section>
 
       <p class="live-status" id="live-status" role="status" aria-live="polite" aria-atomic="true">
         Challenge ready. Build a bridge, then test its rated load.
       </p>
     </main>
-    <script type="module" src="static/game/js/main.js?v=challenge2"></script>
+    <script
+      data-goatcounter="https://bridgebuilder.goatcounter.com/count"
+      async
+      src="//gc.zgo.at/count.js"
+    ></script>
+    <script type="module" src="static/game/js/main.js?v=challenge3"></script>
   </body>
 </html>

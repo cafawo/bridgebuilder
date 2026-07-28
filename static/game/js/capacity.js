@@ -1,4 +1,4 @@
-import { BridgeSimulation, SIMULATION_DT } from "./physics.js?v=challenge2";
+import { BridgeSimulation, SIMULATION_DT } from "./physics.js?v=challenge3";
 
 const DEFAULT_RESOLUTION = 50;
 const DEFAULT_MAX_SECONDS = 45;

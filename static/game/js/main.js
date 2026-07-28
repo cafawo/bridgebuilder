@@ -9,17 +9,23 @@ import {
   loadStoredJson,
   recordStorageKey,
   storeJson,
-} from "./blueprint.js?v=challenge2";
-import { CapacitySearch } from "./capacity.js?v=challenge2";
-import { BridgeEditor } from "./editor.js?v=challenge2";
-import { loadLevel, normalizeSeed } from "./levels.js?v=challenge2";
+} from "./blueprint.js?v=challenge3";
+import { CapacitySearch } from "./capacity.js?v=challenge3";
+import { BridgeEditor } from "./editor.js?v=challenge3";
+import {
+  challengeSeedUrl,
+  fetchLeaderboard,
+  qualifyingCostRecord,
+  submitCostScore,
+} from "./leaderboard.js?v=challenge3";
+import { loadLevel, normalizeSeed } from "./levels.js?v=challenge3";
 import {
   BridgeSimulation,
   PHYSICS_VERSION,
   SIMULATION_DT,
-} from "./physics.js?v=challenge2";
-import { Renderer } from "./renderer.js?v=challenge2";
-import { pointerToCanvas } from "./ui.js?v=challenge2";
+} from "./physics.js?v=challenge3";
+import { Renderer } from "./renderer.js?v=challenge3";
+import { pointerToCanvas } from "./ui.js?v=challenge3";
 
 const canvas = document.getElementById("game-canvas");
 const seedForm = document.getElementById("seed-form");
@@ -42,6 +48,13 @@ const controls = {
   improve: document.getElementById("improve-button"),
   newSeed: document.getElementById("new-seed-button"),
   share: document.getElementById("share-button"),
+  leaderboard: document.getElementById("leaderboard-button"),
+  leaderboardPanel: document.getElementById("leaderboard-panel"),
+  leaderboardClose: document.getElementById("leaderboard-close-button"),
+  leaderboardStatus: document.getElementById("leaderboard-status"),
+  leaderboardTable: document.getElementById("leaderboard-table"),
+  leaderboardBody: document.getElementById("leaderboard-body"),
+  leaderboardUpdated: document.getElementById("leaderboard-updated"),
   capacityProgress: document.getElementById("capacity-progress"),
   capacityProgressBar: document.getElementById("capacity-progress-bar"),
   capacityProgressLabel: document.getElementById("capacity-progress-label"),
@@ -60,6 +73,7 @@ let paused = false;
 let simulationSpeed = 1;
 let testLoad = 0;
 let lastTestLoad = 0;
+let lastTestCost = 0;
 let lastTestGraph = null;
 let lastTestCode = "";
 let handledSimulation = null;
@@ -75,6 +89,9 @@ let inputBound = false;
 let loadToken = 0;
 let draftTimer = null;
 let lastResultKind = "test";
+let leaderboardData = null;
+let leaderboardLoading = false;
+let leaderboardReturnFocus = null;
 
 bootstrap();
 
@@ -90,6 +107,8 @@ window.bridgebuilderDebug = {
     nodeCount: editor?.nodes.length ?? 0,
     beamCount: editor?.beams.length ?? 0,
     cost: editor?.totalCost() ?? 0,
+    costTarget: level?.budget ?? null,
+    overTarget: editor?.overTargetAmount() ?? 0,
     canUndo: editorCanUndo(),
     canRedo: editorCanRedo(),
     generator: level?.generator?.name ?? null,
@@ -141,7 +160,6 @@ async function loadSeed(seed, options = {}) {
   });
   level = loadedLevel;
   editor = new BridgeEditor(level);
-  setEditorBudgetMode();
   simulation = null;
   mode = "build";
   paused = false;
@@ -181,7 +199,7 @@ async function loadSeed(seed, options = {}) {
   announce(
     `${level.name}. ${level.challenge.archetypeLabel}. Rated load ${formatNumber(
       level.challenge.ratedLoad,
-    )}.`,
+    )}. Cost target ${formatNumber(level.budget)}.`,
   );
   updateControls();
 }
@@ -189,16 +207,12 @@ async function loadSeed(seed, options = {}) {
 function restoreEncodedDesign(encoded, message, announceErrors = true) {
   try {
     const snapshot = decodeBlueprint(level, encoded);
-    if (!editor.restore(snapshot, { allowOverBudget: gameMode === "sandbox" })) {
+    if (!editor.restore(snapshot)) {
       throw new Error("Shared bridge is not valid for this site");
-    }
-    if (gameMode === "challenge" && editor.totalCost() > level.budget) {
-      throw new Error("Bridge exceeds this challenge budget");
     }
     setSystemMessage(message.toUpperCase());
   } catch (error) {
     editor = new BridgeEditor(level);
-    setEditorBudgetMode();
     if (announceErrors) {
       setSystemMessage("SHARED BRIDGE REJECTED");
       announce(error.message);
@@ -227,7 +241,6 @@ function bindInput() {
     }
     flushDraft();
     gameMode = nextMode;
-    setEditorBudgetMode();
     basePassedCode = "";
     updateSeedInLocation({ seed: currentSeed, clearDesign: true });
     const draft = loadStoredJson(draftStorageKey(level, gameMode));
@@ -248,8 +261,8 @@ function bindInput() {
     setSystemMessage(gameMode === "challenge" ? "CHALLENGE MODE" : "SANDBOX MODE");
     announce(
       gameMode === "challenge"
-        ? "Challenge mode. Budget and certified records enabled."
-        : "Sandbox mode. Budget limit and records disabled.",
+        ? "Challenge mode. Soft cost target and certified records enabled."
+        : "Sandbox mode. Cost target is informational and records are disabled.",
     );
   });
   controls.test?.addEventListener("click", () => startTest());
@@ -280,6 +293,27 @@ function bindInput() {
   });
   controls.improve?.addEventListener("click", () => returnToEdit());
   controls.share?.addEventListener("click", () => void shareCurrentDesign());
+  controls.leaderboard?.addEventListener("click", () => openLeaderboard());
+  controls.leaderboardClose?.addEventListener("click", () => closeLeaderboard());
+  controls.leaderboardPanel?.addEventListener("click", (event) => {
+    if (event.target === controls.leaderboardPanel) {
+      closeLeaderboard();
+    }
+  });
+  controls.leaderboardPanel?.addEventListener("keydown", trapLeaderboardFocus);
+  controls.leaderboardBody?.addEventListener("click", (event) => {
+    const row = event.target.closest(".leaderboard-row");
+    if (row && !event.target.closest("a")) {
+      window.location.assign(row.dataset.href);
+    }
+  });
+  controls.leaderboardBody?.addEventListener("keydown", (event) => {
+    const row = event.target.closest(".leaderboard-row");
+    if (row && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      window.location.assign(row.dataset.href);
+    }
+  });
   for (const button of controls.speeds) {
     button.addEventListener("click", () => {
       const requested = Number(button.dataset.speed);
@@ -322,6 +356,11 @@ function bindInput() {
   });
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isLeaderboardOpen()) {
+      event.preventDefault();
+      closeLeaderboard();
+      return;
+    }
     if (isFormControl(event.target)) {
       return;
     }
@@ -426,11 +465,6 @@ function startTest(requestedLoad = level?.challenge?.ratedLoad) {
   if (!level || !editor || capacitySearch) {
     return false;
   }
-  if (gameMode === "challenge" && editor.totalCost() > level.budget) {
-    setSystemMessage("OVER BUDGET");
-    announce("The bridge must be within budget before testing.");
-    return false;
-  }
   if (editor.beams.length === 0) {
     setSystemMessage("BUILD A BRIDGE");
     announce("Build at least one beam before testing.");
@@ -440,6 +474,7 @@ function startTest(requestedLoad = level?.challenge?.ratedLoad) {
   hideResult();
   lastTestGraph = editor.snapshot();
   lastTestCode = safeDesignCode();
+  lastTestCost = Math.round(editor.totalCost());
   testLoad = Math.max(50, Number(requestedLoad) || level.challenge.ratedLoad);
   lastTestLoad = testLoad;
   simulation = new BridgeSimulation(level, lastTestGraph, { load: testLoad });
@@ -469,17 +504,18 @@ function completeSimulation() {
           firstFailure.x,
         )}, ${Math.round(firstFailure.y)}).`
       : "";
+  const costSummary = costTargetSummary(lastTestCost);
   const summary = won
     ? `${formatNumber(testLoad)} crossed safely. Peak utilization ${formatPercent(
         telemetry.peakUtilization,
       )}; ${telemetry.brokenCount ?? 0} broken beams.${
         tier ? ` ${tier.label} earned.` : ""
-      }`
+      } ${costSummary}`
     : `${telemetry.reason || "Bridge failed"} at ${formatNumber(
         testLoad,
       )}. Peak utilization ${formatPercent(
         telemetry.peakUtilization,
-      )}.${failureDetail}`;
+      )}.${failureDetail} ${costSummary}`;
 
   lastResultKind = "test";
   showResult(title, summary, won);
@@ -490,6 +526,20 @@ function completeSimulation() {
     if (gameMode === "challenge") {
       saveBestRecord(testLoad, lastTestCode, telemetry);
     }
+  }
+  const costRecord = qualifyingCostRecord({
+    gameMode,
+    won,
+    testLoad,
+    requiredLoad: level.challenge.ratedLoad,
+    cost: lastTestCost,
+    maximumCost: level.budget,
+    seed: currentSeed,
+    generatorVersion: level.generator.version,
+    physicsVersion: PHYSICS_VERSION,
+  });
+  if (costRecord) {
+    submitCostScore(costRecord);
   }
   updateControls();
 }
@@ -525,10 +575,6 @@ function startCapacityTest() {
   if (!design || design !== basePassedCode) {
     setSystemMessage("PASS RATED LOAD FIRST");
     announce("Pass the rated load with this unchanged bridge before certifying capacity.");
-    return;
-  }
-  if (gameMode === "challenge" && editor.totalCost() > level.budget) {
-    setSystemMessage("OVER BUDGET");
     return;
   }
 
@@ -605,7 +651,7 @@ function advanceCapacity() {
   showResult(
     "Capacity certified",
     `${boundary}${tier ? ` ${tier.label} earned.` : ""} ` +
-      `Score tie-break cost: ${formatNumber(editor.totalCost())}. ` +
+      `${costTargetSummary()} Lower cost breaks equal-load ties. ` +
       `Damage: ${passTelemetry.brokenCount ?? 0} broken beams.`,
     true,
   );
@@ -854,11 +900,21 @@ function updateCapacityProgress(state) {
   }
 }
 
-function setEditorBudgetMode() {
-  if (!editor) {
-    return;
+function costTargetSummary(cost = editor?.totalCost() ?? 0) {
+  const roundedCost = Math.round(Number(cost) || 0);
+  const target = Math.round(Number(level?.budget) || 0);
+  const delta = roundedCost - target;
+  if (delta > 0) {
+    return `Cost ${formatNumber(roundedCost)}; ${formatNumber(delta)} over target ${formatNumber(
+      target,
+    )}.`;
   }
-  editor.setBudgetEnforced(gameMode === "challenge");
+  if (delta < 0) {
+    return `Cost ${formatNumber(roundedCost)}; ${formatNumber(-delta)} under target ${formatNumber(
+      target,
+    )}.`;
+  }
+  return `Cost ${formatNumber(roundedCost)}; exactly on target ${formatNumber(target)}.`;
 }
 
 function showResult(title, summary, success = null) {
@@ -881,6 +937,141 @@ function hideResult() {
     controls.resultPanel.hidden = true;
     delete controls.resultPanel.dataset.outcome;
   }
+}
+
+function openLeaderboard() {
+  if (!controls.leaderboardPanel) {
+    return;
+  }
+  leaderboardReturnFocus = document.activeElement;
+  controls.leaderboardPanel.hidden = false;
+  controls.leaderboardClose?.focus({ preventScroll: true });
+  if (leaderboardData) {
+    renderLeaderboard(leaderboardData);
+  } else if (!leaderboardLoading) {
+    void loadLeaderboard();
+  }
+}
+
+function closeLeaderboard() {
+  if (!controls.leaderboardPanel || controls.leaderboardPanel.hidden) {
+    return;
+  }
+  controls.leaderboardPanel.hidden = true;
+  if (leaderboardReturnFocus instanceof HTMLElement) {
+    leaderboardReturnFocus.focus({ preventScroll: true });
+  }
+  leaderboardReturnFocus = null;
+}
+
+async function loadLeaderboard() {
+  leaderboardLoading = true;
+  setLeaderboardState("Loading leaderboard…");
+  try {
+    const data = await fetchLeaderboard({
+      generatorVersion: level.generator.version,
+      physicsVersion: PHYSICS_VERSION,
+    });
+    leaderboardData = data;
+    renderLeaderboard(data);
+  } catch (error) {
+    console.warn("Leaderboard unavailable.", error);
+    setLeaderboardState("Leaderboard unavailable");
+  } finally {
+    leaderboardLoading = false;
+  }
+}
+
+function renderLeaderboard(data) {
+  if (
+    !controls.leaderboardBody ||
+    !controls.leaderboardTable ||
+    !controls.leaderboardStatus
+  ) {
+    return;
+  }
+  controls.leaderboardBody.replaceChildren();
+  if (data.entries.length === 0) {
+    setLeaderboardState("No scores yet");
+  } else {
+    for (const entry of data.entries) {
+      const destination = challengeSeedUrl(entry.seed);
+      const row = document.createElement("tr");
+      row.className = "leaderboard-row";
+      row.tabIndex = 0;
+      row.dataset.href = destination;
+      row.setAttribute(
+        "aria-label",
+        `Open seed ${entry.seed}, best cost ${formatNumber(entry.cost)}`,
+      );
+
+      const seedCell = document.createElement("td");
+      const seedLink = document.createElement("a");
+      seedLink.href = destination;
+      seedLink.textContent = entry.seed;
+      seedCell.append(seedLink);
+
+      const costCell = document.createElement("td");
+      costCell.textContent = formatNumber(entry.cost);
+      row.append(seedCell, costCell);
+      controls.leaderboardBody.append(row);
+    }
+    controls.leaderboardStatus.textContent = "";
+    controls.leaderboardTable.hidden = false;
+  }
+  if (controls.leaderboardUpdated) {
+    controls.leaderboardUpdated.textContent = data.generatedAt
+      ? `Updated ${formatLeaderboardDate(data.generatedAt)}`
+      : "Waiting for the first daily update";
+  }
+}
+
+function setLeaderboardState(message) {
+  if (controls.leaderboardStatus) {
+    controls.leaderboardStatus.textContent = message;
+  }
+  if (controls.leaderboardTable) {
+    controls.leaderboardTable.hidden = true;
+  }
+  if (controls.leaderboardUpdated) {
+    controls.leaderboardUpdated.textContent = "";
+  }
+}
+
+function isLeaderboardOpen() {
+  return Boolean(controls.leaderboardPanel && !controls.leaderboardPanel.hidden);
+}
+
+function trapLeaderboardFocus(event) {
+  if (event.key !== "Tab" || !isLeaderboardOpen()) {
+    return;
+  }
+  const focusable = [
+    ...controls.leaderboardPanel.querySelectorAll(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((element) => !element.hidden);
+  if (focusable.length === 0) {
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (focusable.length === 1 || (event.shiftKey && document.activeElement === first)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function formatLeaderboardDate(value) {
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 function simulationTelemetry() {

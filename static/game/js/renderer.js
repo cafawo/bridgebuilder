@@ -1,4 +1,4 @@
-import { formatCost, formatLoad, modeLabel } from "./ui.js?v=challenge2";
+import { formatCost, formatLoad, modeLabel } from "./ui.js?v=challenge3";
 
 export class Renderer {
   constructor(canvas, level) {
@@ -47,9 +47,6 @@ export class Renderer {
     this.drawTerrainDetails(ctx);
     this.drawDecorations(ctx, now);
     this.drawRoadEdges(ctx);
-    if (mode === "build") {
-      this.drawNavigationClearances(ctx);
-    }
 
     if (mode === "simulation" && simulation) {
       this.drawBeams(ctx, simulation.nodes, simulation.beams, true);
@@ -236,38 +233,6 @@ export class Renderer {
     }
   }
 
-  drawNavigationClearances(ctx) {
-    const clearances = this.level.navigationClearances;
-    if (!clearances.length) {
-      return;
-    }
-
-    ctx.save();
-    ctx.setLineDash([6, 7]);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = withAlpha(this.palette.road, 0.34);
-    ctx.fillStyle = withAlpha(this.palette.road, 0.54);
-    for (const clearance of clearances) {
-      if (!clearance.points?.length) {
-        continue;
-      }
-      drawPolygon(ctx, clearance.points);
-      ctx.stroke();
-      const bounds = polygonBounds(clearance.points);
-      if (bounds && bounds.width > 90) {
-        drawText(
-          ctx,
-          "KEEP CLEAR",
-          bounds.x + bounds.width / 2,
-          bounds.y + bounds.height / 2 - 6,
-          11,
-          "center",
-        );
-      }
-    }
-    ctx.restore();
-  }
-
   drawBeams(ctx, nodes, beams, showStress) {
     ctx.lineCap = "round";
     const ordered = [...beams].sort((a, b) => Number(a.deck) - Number(b.deck));
@@ -336,11 +301,18 @@ export class Renderer {
     line(ctx, preview.from.x, preview.from.y, preview.to.x, preview.to.y);
     ctx.restore();
 
+    const overTarget = preview.overTargetAmount > 0.001;
     const label = preview.valid
-      ? `${previewLabel(preview)} · ${formatCost(preview.cost)}`
+      ? `${previewLabel(preview)} · ${formatCost(preview.cost)}${
+          overTarget ? ` · +${formatCost(preview.overTargetAmount)} OVER TARGET` : ""
+        }`
       : preview.reason.toUpperCase();
     ctx.save();
-    ctx.fillStyle = preview.valid ? "#eeeeee" : "#ff6a6a";
+    ctx.fillStyle = preview.valid
+      ? overTarget
+        ? this.palette.stressWarning
+        : "#eeeeee"
+      : "#ff6a6a";
     drawText(
       ctx,
       label,
@@ -494,10 +466,18 @@ export class Renderer {
       }
     } else {
       const totalCost = editor.totalCost();
-      const remaining =
-        editor.enforceBudget === false ? "Unlimited" : formatCost(editor.remainingBudget());
+      const targetDelta = editor.targetDelta();
+      const overTarget = targetDelta < -0.001;
+      const targetLabel =
+        overTarget
+          ? `Target: ${formatCost(this.level.budget)} · OVER +${formatCost(-targetDelta)}`
+          : targetDelta > 0.001
+            ? `Target: ${formatCost(this.level.budget)} · ${formatCost(targetDelta)} under`
+            : `Target: ${formatCost(this.level.budget)} · ON TARGET`;
       drawText(ctx, `Cost: ${formatCost(totalCost)}`, 8, this.canvas.height - 76, 18, "left");
-      drawText(ctx, `Remaining: ${remaining}`, 8, this.canvas.height - 52, 16, "left");
+      ctx.fillStyle = overTarget ? this.palette.stressWarning : "#dddddd";
+      drawText(ctx, targetLabel, 8, this.canvas.height - 52, 16, "left");
+      ctx.fillStyle = "#dddddd";
       drawText(ctx, `Rated load: ${formatLoad(ratedLoad)}`, 8, this.canvas.height - 28, 16, "left");
       const tierSummary = loadTierSummary(this.level);
       if (gameMode === "challenge" && tierSummary) {
@@ -506,7 +486,9 @@ export class Renderer {
       if (gameMode === "challenge" && Number.isFinite(state.bestRecord?.maxLoad)) {
         drawText(
           ctx,
-          `Personal best: ${formatLoad(state.bestRecord.maxLoad)}`,
+          `Personal best: ${formatLoad(state.bestRecord.maxLoad)} @ ${formatCost(
+            state.bestRecord.cost,
+          )}`,
           this.canvas.width - 8,
           this.canvas.height - 52,
           15,
@@ -863,19 +845,6 @@ function outcomeLabel(status, reason) {
     return "BRIDGE HOLDS";
   }
   return reason ? reason.toUpperCase() : "CROSSING FAILED";
-}
-
-function polygonBounds(points) {
-  const xs = points.map(([x]) => x);
-  const ys = points.map(([, y]) => y);
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return {
-    x,
-    y,
-    width: Math.max(...xs) - x,
-    height: Math.max(...ys) - y,
-  };
 }
 
 function withAlpha(color, alpha) {

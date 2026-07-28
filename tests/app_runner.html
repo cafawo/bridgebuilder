@@ -195,7 +195,6 @@
             y: Math.round(source.y / snap) * snap,
           };
           const probe = new BridgeEditor(level);
-          probe.setBudgetEnforced(false);
           probe.selectedNode = anchorIndex;
           probe.handleEmptyClick(target);
           if (probe.beams.length > 0) {
@@ -208,12 +207,139 @@
         throw new Error("reference bridge did not expose a touch-buildable first member");
       }
 
+      function overTargetReference(level, reference) {
+        const graph = {
+          nodes: reference.nodes.map((node) => ({ ...node })),
+          beams: reference.beams.map((beam) => ({ ...beam })),
+        };
+        const validator = new BridgeEditor(level);
+        for (let y = 40; y < level.roadY - 70; y += level.snap * 2) {
+          for (let x = 40; x < level.canvas.width - 40; x += level.snap * 2) {
+            const node = { x, y, fixed: false };
+            if (
+              validator.placementReason(node) ||
+              graph.nodes.some((existing) => Math.hypot(existing.x - x, existing.y - y) <= 5)
+            ) {
+              continue;
+            }
+            graph.nodes.push(node);
+            const validation = validator.validateSnapshot(graph);
+            if (!validation.valid) {
+              graph.nodes.pop();
+              continue;
+            }
+            if (validation.cost > level.budget) {
+              return { graph, cost: validation.cost };
+            }
+          }
+        }
+        throw new Error("could not create a valid over-target reference fixture");
+      }
+
       function parseStored(key) {
         const value = localStorage.getItem(key);
         return value ? JSON.parse(value) : null;
       }
 
       clearBridgebuilderStorage();
+
+      await check(
+        "leaderboard is lazy, accessible, failure-safe, and opens Challenge seeds",
+        async () => {
+          const app = await loadApp("app-leaderboard");
+          try {
+            const button = app.document.getElementById("leaderboard-button");
+            const panel = app.document.getElementById("leaderboard-panel");
+            const close = app.document.getElementById("leaderboard-close-button");
+            const status = app.document.getElementById("leaderboard-status");
+            const table = app.document.getElementById("leaderboard-table");
+            button.focus();
+            app.window.fetch = async () => {
+              throw new Error("offline fixture");
+            };
+            click(app, button);
+            await waitFor(
+              () => status.textContent === "Leaderboard unavailable",
+              "offline leaderboard did not expose its fallback",
+            );
+            equal(panel.hidden, false, "leaderboard dialog did not open");
+            equal(panel.getAttribute("role"), "dialog");
+            equal(panel.getAttribute("aria-modal"), "true");
+            equal(app.document.activeElement, close, "leaderboard close button did not receive focus");
+            close.dispatchEvent(
+              new app.window.KeyboardEvent("keydown", {
+                bubbles: true,
+                cancelable: true,
+                key: "Tab",
+              }),
+            );
+            equal(app.document.activeElement, close, "leaderboard focus escaped the dialog");
+            equal(
+              app.document.body.dataset.appReady,
+              "true",
+              "leaderboard failure affected game startup",
+            );
+
+            app.window.dispatchEvent(
+              new app.window.KeyboardEvent("keydown", {
+                bubbles: true,
+                cancelable: true,
+                key: "Escape",
+              }),
+            );
+            equal(panel.hidden, true, "Escape did not close the leaderboard");
+            equal(app.document.activeElement, button, "leaderboard did not restore focus");
+
+            const state = app.debug.state();
+            app.window.fetch = async () => ({
+              ok: true,
+              json: async () => ({
+                schemaVersion: 1,
+                generatedAt: "2026-07-27T02:23:00Z",
+                generatorVersion: state.generatorVersion,
+                physicsVersion: state.physicsVersion,
+                entries: [
+                  { seed: "leaderboard-expensive", cost: 1600, requiredLoad: 9000 },
+                  { seed: "leaderboard-cheap", cost: 900, requiredLoad: 8000 },
+                ],
+              }),
+            });
+            click(app, button);
+            await waitFor(() => !table.hidden, "valid leaderboard did not render");
+            const headers = [...table.querySelectorAll("th")].map((cell) =>
+              cell.textContent.trim().toUpperCase(),
+            );
+            equal(JSON.stringify(headers), JSON.stringify(["SEED", "BEST COST"]));
+            const rows = [...table.querySelectorAll("tbody tr")];
+            equal(rows.length, 2, "leaderboard row count is wrong");
+            equal(
+              rows[0].querySelector("a").textContent,
+              "leaderboard-cheap",
+              "leaderboard was not cost-sorted",
+            );
+            assert(
+              /Updated/.test(app.document.getElementById("leaderboard-updated").textContent),
+              "leaderboard update date was not shown",
+            );
+
+            const navigation = new Promise((resolve) => {
+              app.frame.addEventListener("load", resolve, { once: true });
+            });
+            click(app, rows[0].querySelector("a"));
+            await navigation;
+            await waitFor(
+              () => app.frame.contentDocument?.body?.dataset.appReady === "true",
+              "leaderboard seed did not start the game",
+            );
+            const destination = new URL(app.frame.contentWindow.location.href);
+            equal(destination.searchParams.get("seed"), "leaderboard-cheap");
+            equal(destination.searchParams.has("mode"), false);
+            equal(destination.hash, "");
+          } finally {
+            app.frame.remove();
+          }
+        },
+      );
 
       const interactionPassed = await check(
         "real app modes, touch editing, autosave isolation, and accessible controls",
@@ -382,11 +508,12 @@
       );
 
       if (interactionPassed) {
-        await check("rated reference pass unlocks Capacity and restores its versioned record", async () => {
+        await check("over-target rated pass unlocks Capacity and restores its record", async () => {
         const seed = "browser-reference-0";
         const level = generateRandomLevel(seed);
         const reference = generateReferenceBridge(seed);
-        const design = encodeBlueprint(level, reference);
+        const overTarget = overTargetReference(level, reference);
+        const design = encodeBlueprint(level, overTarget.graph);
         const recordKey = recordStorageKey(level);
         const oldRecordKey = recordKey.replace(
           `:v${BLUEPRINT_VERSION}:`,
@@ -399,8 +526,14 @@
 
         let app = await loadApp(seed, design);
         try {
+          const globalCostEvents = [];
+          app.window.goatcounter = {
+            count: (event) => globalCostEvents.push(event),
+          };
           equal(app.debug.state().gameMode, "challenge");
-          equal(app.debug.state().beamCount, reference.beams.length);
+          equal(app.debug.state().beamCount, overTarget.graph.beams.length);
+          assert(app.debug.state().cost > level.budget, "over-target bridge was not restored");
+          assert(app.debug.state().overTarget > 0, "over-target amount was not exposed");
           const speedFour = app.document.querySelector('[data-speed="4"]');
           click(app, speedFour);
           assert(
@@ -422,6 +555,10 @@
             /certified/i.test(app.document.getElementById("result-title").textContent),
             "rated pass was not reported as certified",
           );
+          assert(
+            /over target/i.test(app.document.getElementById("result-summary").textContent),
+            "rated result did not disclose its target overrun",
+          );
 
           const record = parseStored(recordKey);
           equal(record?.version, BLUEPRINT_VERSION, "personal best record version is wrong");
@@ -430,6 +567,12 @@
             "rated pass was not persisted as a personal best",
           );
           equal(record.fingerprint, level.challenge.fingerprint);
+          assert(record.cost > level.budget, "over-target personal best was not stored");
+          equal(
+            globalCostEvents.length,
+            0,
+            "over-target rated pass was submitted to the global cost leaderboard",
+          );
 
           app.debug.edit();
           const capacity = app.document.getElementById("capacity-button");

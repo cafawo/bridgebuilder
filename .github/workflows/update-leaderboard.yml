@@ -1,0 +1,55 @@
+name: Update leaderboard
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: update-leaderboard
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the current site
+        uses: actions/checkout@v4
+
+      - name: Build the latest leaderboard snapshot
+        shell: pwsh
+        env:
+          GOATCOUNTER_API_TOKEN: ${{ secrets.GOATCOUNTER_API_TOKEN }}
+        run: >
+          ./.github/scripts/update-leaderboard.ps1
+          -Token $env:GOATCOUNTER_API_TOKEN
+
+      - name: Commit the snapshot
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- static/data/leaderboard.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: update leaderboard snapshot"
+          git push
+
+      - name: Request a GitHub Pages rebuild
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/pages/builds"
+          Invoke-RestMethod -Uri $uri -Headers $headers -Method Post | Out-Null
