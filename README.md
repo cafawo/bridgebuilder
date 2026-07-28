@@ -143,6 +143,9 @@ continue building, test, share, and certify capacity above it; the HUD and resul
 overrun. The seven visual biomes add independent shore and riverbed shapes, palettes, animated
 water, reeds, ridgelines, and small effects using Canvas primitives only. Explicit terrain, water,
 hazard, and build-exclusion polygons keep rendering, editing, and collision aligned.
+Terrain silhouettes use contrasting fills without a hard polygon outline. Fixed-pier rivers remain
+continuous behind the foreground pier, while twin-channel islands retain two genuinely separate
+water bodies and hazards.
 
 Generation is intentionally small enough to stay on the main thread. The expensive work during play
 is still the per-frame canvas rendering and bridge simulation, not creating a seeded level.

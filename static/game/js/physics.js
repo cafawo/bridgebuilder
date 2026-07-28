@@ -739,7 +739,7 @@ export class BridgeSimulation {
       this.vehicle.previousAngle,
     );
 
-    const hazard = this.level.hazards.find((candidate) => {
+    const hazardHits = this.level.hazards.filter((candidate) => {
       return (
         currentCollisionPoints
           .slice(0, 5)
@@ -753,6 +753,9 @@ export class BridgeSimulation {
         })
       );
     });
+    const hazard =
+      hazardHits.find((candidate) => candidate.occludesWater === true) ??
+      hazardHits[0];
     if (hazard) {
       if (hazard.type === "water") {
         this.finish("lost", "Vehicle drowned");

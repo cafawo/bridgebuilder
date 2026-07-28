@@ -161,11 +161,7 @@ function validateGeometry(level) {
     !Array.isArray(level.terrain) ||
     level.terrain.length === 0 ||
     !level.terrain.every((shape) => {
-      return (
-        isPolygon(shape) &&
-        typeof shape.color === "string" &&
-        typeof shape.edgeColor === "string"
-      );
+      return isPolygon(shape) && typeof shape.color === "string";
     })
   ) {
     throw new Error("Level terrain polygons are invalid");
@@ -228,6 +224,24 @@ function validateGeometry(level) {
       throw new Error("Twin-channel water bodies must be separated by the island");
     }
   }
+
+  if (level.challenge.archetype === "fixed_central_pier") {
+    const pier = level.terrain.find((shape) => shape.id === "central-pier-terrain");
+    const water = level.waterBodies[0];
+    const pierXs = pier?.points.map(([x]) => x) ?? [];
+    const pierImpact = level.hazards.find(
+      (hazard) => hazard.id === "central-pier-terrain-impact",
+    );
+    if (
+      level.waterBodies.length !== 1 ||
+      pierXs.length === 0 ||
+      water.bounds.x >= Math.min(...pierXs) ||
+      water.bounds.x + water.bounds.width <= Math.max(...pierXs) ||
+      pierImpact?.occludesWater !== true
+    ) {
+      throw new Error("Fixed-pier water must continue behind solid foreground terrain");
+    }
+  }
 }
 
 function validateConstructionContract(level) {
@@ -261,7 +275,6 @@ function validateConstructionContract(level) {
     "grid",
     "gridMajor",
     "rock",
-    "rockEdge",
     "water",
     "waterHighlight",
     "road",

@@ -36,7 +36,6 @@ const BASE_PALETTE = Object.freeze({
   grid: "rgba(205, 215, 220, 0.075)",
   gridMajor: "rgba(205, 215, 220, 0.13)",
   rock: "#303335",
-  rockEdge: "#4a4e50",
   water: "#11106d",
   waterHighlight: "rgba(114, 145, 207, 0.34)",
   road: "#77736b",
@@ -65,7 +64,6 @@ const REGIMES = [
     palette: palette({
       sky: "#202a2c",
       rock: "#343838",
-      rockEdge: "#555b57",
       water: "#18266c",
       waterHighlight: "rgba(128, 162, 207, 0.34)",
       vegetation: "#92965a",
@@ -84,7 +82,6 @@ const REGIMES = [
     palette: palette({
       sky: "#272b29",
       rock: "#393b35",
-      rockEdge: "#575a4d",
       water: "#253b55",
       waterHighlight: "rgba(151, 174, 164, 0.27)",
       road: "#827d6d",
@@ -105,7 +102,6 @@ const REGIMES = [
       sky: "#202523",
       grid: "rgba(205, 215, 205, 0.065)",
       rock: "#30352f",
-      rockEdge: "#4b5548",
       water: "#172f35",
       waterHighlight: "rgba(115, 159, 146, 0.25)",
       vegetation: "#777f49",
@@ -124,7 +120,6 @@ const REGIMES = [
     palette: palette({
       sky: "#22282d",
       rock: "#34373a",
-      rockEdge: "#555c61",
       water: "#162461",
       waterHighlight: "rgba(139, 166, 215, 0.35)",
       vegetation: "#7f8655",
@@ -143,7 +138,6 @@ const REGIMES = [
     palette: palette({
       sky: "#1e252b",
       rock: "#30363b",
-      rockEdge: "#56616a",
       water: "#152667",
       waterHighlight: "rgba(157, 187, 228, 0.38)",
       road: "#747778",
@@ -163,7 +157,6 @@ const REGIMES = [
     palette: palette({
       sky: "#23272d",
       rock: "#34353c",
-      rockEdge: "#545866",
       water: "#242064",
       waterHighlight: "rgba(148, 151, 211, 0.34)",
       vegetation: "#88825a",
@@ -184,7 +177,6 @@ const REGIMES = [
       grid: "rgba(226, 207, 190, 0.07)",
       gridMajor: "rgba(226, 207, 190, 0.12)",
       rock: "#403732",
-      rockEdge: "#6a584e",
       water: "#26366d",
       waterHighlight: "rgba(178, 172, 202, 0.32)",
       road: "#89796b",
@@ -657,7 +649,6 @@ function buildGeometry(mechanics, paletteSpec) {
     kind: "terrain",
     collidable: true,
     color: paletteSpec.rock,
-    edgeColor: paletteSpec.rockEdge,
     points: [
       [0, mechanics.roadY],
       [mechanics.leftEdge, mechanics.roadY],
@@ -712,12 +703,14 @@ function buildGeometry(mechanics, paletteSpec) {
       id: "central-pier-terrain",
       kind: "terrain",
       collidable: true,
+      occludesWater: true,
       color: paletteSpec.rock,
-      edgeColor: paletteSpec.rockEdge,
       points: [
         [pier.x1, mechanics.roadY],
         [pier.x2, mechanics.roadY],
         [pier.x2 + pier.sideRun, mechanics.floorY],
+        [pier.x2 + pier.sideRun, CANVAS_HEIGHT + 8],
+        [pier.x1 - pier.sideRun, CANVAS_HEIGHT + 8],
         [pier.x1 - pier.sideRun, mechanics.floorY],
       ],
     });
@@ -762,7 +755,6 @@ function buildGeometry(mechanics, paletteSpec) {
       kind: "terrain",
       collidable: true,
       color: paletteSpec.rock,
-      edgeColor: paletteSpec.rockEdge,
       points: [
         [island.x1, mechanics.roadY],
         ...rightSlope,
@@ -886,10 +878,6 @@ function waterRangesFor(mechanics, leftWaterX, rightWaterX) {
     return [
       {
         x1: leftWaterX,
-        x2: mechanics.pier.x1 - mechanics.pier.sideRun,
-      },
-      {
-        x1: mechanics.pier.x2 + mechanics.pier.sideRun,
         x2: rightWaterX,
       },
     ];
@@ -1185,6 +1173,7 @@ function buildHazards(terrain, waterBodies) {
     ...terrain.map((land) => ({
       id: `${land.id}-impact`,
       type: "terrain-impact",
+      occludesWater: land.occludesWater === true,
       points: clonePoints(land.points),
       bounds: boundsForPoints(land.points),
     })),

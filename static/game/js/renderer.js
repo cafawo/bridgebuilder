@@ -165,9 +165,6 @@ export class Renderer {
       drawPolygon(ctx, terrain.points);
       ctx.fillStyle = terrain.color || this.palette.rock;
       ctx.fill();
-      ctx.strokeStyle = terrain.edgeColor || this.palette.rockEdge;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
     }
   }
 

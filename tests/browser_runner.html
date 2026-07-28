@@ -45,6 +45,7 @@
         PHYSICS_VERSION,
         SIMULATION_DT,
       } from "../static/game/js/physics.js";
+      import { Renderer } from "../static/game/js/renderer.js";
       import { validateLevel } from "../static/game/js/levels.js";
 
       const results = document.getElementById("results");
@@ -64,6 +65,23 @@
         if (actual !== expected) {
           throw new Error(`${message}: expected ${expected}, received ${actual}`);
         }
+      }
+
+      function hexColorDistance(first, second) {
+        const parse = (value) => {
+          const match = /^#([\da-f]{6})$/i.exec(value);
+          if (!match) {
+            throw new Error(`expected a six-digit hex color, received ${value}`);
+          }
+          return [0, 2, 4].map((offset) => Number.parseInt(match[1].slice(offset, offset + 2), 16));
+        };
+        const left = parse(first);
+        const right = parse(second);
+        return Math.hypot(
+          left[0] - right[0],
+          left[1] - right[1],
+          left[2] - right[2],
+        );
       }
 
       function expectThrows(callback, message = "expected an exception") {
@@ -205,6 +223,30 @@
         equal(JSON.stringify(first.hazards), JSON.stringify(second.hazards));
       });
 
+      test("terrain rendering relies on contrasting fills without hard polygon strokes", () => {
+        const level = generateRandomLevel("gallery-10", { certify: false });
+        let fills = 0;
+        let strokes = 0;
+        const context = {
+          beginPath() {},
+          moveTo() {},
+          lineTo() {},
+          closePath() {},
+          fill() {
+            fills += 1;
+          },
+          stroke() {
+            strokes += 1;
+          },
+        };
+        const renderer = Object.create(Renderer.prototype);
+        renderer.level = level;
+        renderer.palette = level.palette;
+        renderer.drawTerrain(context);
+        equal(fills, level.terrain.length, "terrain polygons were not filled");
+        equal(strokes, 0, "terrain polygons retained a hard outline");
+      });
+
       test("seed corpus covers every mechanical archetype", () => {
         const archetypes = new Set();
         const regimes = new Set();
@@ -226,6 +268,11 @@
           );
           assert(level.challenge.ratedLoad > 0, "rated load must be positive");
           assert(level.challenge.referenceCost > 0, "reference cost must be positive");
+          assert(
+            hexColorDistance(level.palette.rock, level.palette.sky) >= 20,
+            `${level.generator.regime} terrain does not contrast with the sky`,
+          );
+          assert(!("rockEdge" in level.palette), "obsolete terrain edge color was generated");
           const reference = generateReferenceBridge(level.seed, { certify: false });
           assert(
             level.budget >= level.challenge.referenceCost * 1.25,
@@ -266,6 +313,7 @@
             );
           }
           for (const terrain of level.terrain) {
+            assert(!("edgeColor" in terrain), `${terrain.id} retained a hard edge color`);
             const hazard = level.hazards.find(
               (candidate) => candidate.id === `${terrain.id}-impact`,
             );
@@ -286,6 +334,27 @@
           if (level.challenge.archetype === "twin_channel_island") {
             assert(level.waterBodies.length >= 2, "twin channels need separate water bodies");
             assert(level.groundSegments.length >= 3, "island must be driveable ground");
+          }
+          if (level.challenge.archetype === "fixed_central_pier") {
+            equal(level.waterBodies.length, 1, "pier channel should use one continuous water body");
+            const pier = level.groundSegments.find((segment) => segment.kind === "pier");
+            const water = level.waterBodies[0];
+            const pierTerrain = level.terrain.find(
+              (terrain) => terrain.id === "central-pier-terrain",
+            );
+            assert(
+              water.bounds.x < pier.x1 &&
+                water.bounds.x + water.bounds.width > pier.x2,
+              "water does not continue behind the foreground pier",
+            );
+            assert(
+              Math.max(...pierTerrain.points.map(([, y]) => y)) > level.canvas.height,
+              "foreground pier does not merge below the organic valley floor",
+            );
+            const pierHazard = level.hazards.find(
+              (hazard) => hazard.id === "central-pier-terrain-impact",
+            );
+            assert(pierHazard?.occludesWater, "foreground pier does not occlude water collisions");
           }
           for (const anchor of level.anchors) {
             assert(anchor.x >= 0 && anchor.x <= level.canvas.width, "anchor x is out of bounds");
@@ -1010,6 +1079,35 @@
           result.reason.includes("drowned"),
           `fatal goal-side hazard used the wrong outcome: ${result.reason}; ` +
             `vehicle=${JSON.stringify(result.vehicle)}`,
+        );
+      });
+
+      test("foreground terrain occludes overlapping background water", () => {
+        const fixture = physicsFixture();
+        const overlap = [
+          [280, 70],
+          [360, 70],
+          [360, 180],
+          [280, 180],
+        ];
+        fixture.level.hazards = [
+          { type: "water", points: overlap },
+          {
+            type: "terrain-impact",
+            occludesWater: true,
+            points: overlap,
+          },
+        ];
+        const simulation = new BridgeSimulation(fixture.level, fixture.empty, { load: 4000 });
+        simulation.vehicle.x = 320;
+        simulation.vehicle.y = 100;
+        simulation.vehicle.previousX = 320;
+        simulation.vehicle.previousY = 100;
+        simulation.evaluateState();
+        equal(simulation.status, "lost");
+        assert(
+          simulation.reason.includes("struck terrain"),
+          `background water won an occluded collision: ${simulation.reason}`,
         );
       });
 

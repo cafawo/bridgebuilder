@@ -120,6 +120,9 @@ def test_current_gameplay_contracts_are_declared():
     assert "OVER BUDGET" not in main
     assert "navigationClearances" not in generator + editor + levels + renderer
     assert "KEEP CLEAR" not in renderer
+    assert "rockEdge" not in generator + levels + renderer
+    assert "edgeColor" not in generator + levels + renderer
+    assert renderer.index("this.drawWater(ctx, now)") < renderer.index("this.drawTerrain(ctx)")
 
 
 def test_python_is_test_tooling_only():
