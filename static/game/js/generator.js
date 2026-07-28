@@ -699,18 +699,23 @@ function buildGeometry(mechanics, paletteSpec) {
 
   if (mechanics.pier) {
     const pier = mechanics.pier;
+    const pierBottomY = CANVAS_HEIGHT + 16;
+    const taperHeight = Math.max(1, mechanics.floorY - mechanics.roadY);
+    const pierBottomRun =
+      pier.sideRun * ((pierBottomY - mechanics.roadY) / taperHeight);
     terrain.push({
       id: "central-pier-terrain",
       kind: "terrain",
       collidable: true,
+      foreground: true,
       occludesWater: true,
       color: paletteSpec.rock,
       points: [
         [pier.x1, mechanics.roadY],
         [pier.x2, mechanics.roadY],
         [pier.x2 + pier.sideRun, mechanics.floorY],
-        [pier.x2 + pier.sideRun, CANVAS_HEIGHT + 8],
-        [pier.x1 - pier.sideRun, CANVAS_HEIGHT + 8],
+        [pier.x2 + pierBottomRun, pierBottomY],
+        [pier.x1 - pierBottomRun, pierBottomY],
         [pier.x1 - pier.sideRun, mechanics.floorY],
       ],
     });
@@ -754,6 +759,7 @@ function buildGeometry(mechanics, paletteSpec) {
       id: "central-island-terrain",
       kind: "terrain",
       collidable: true,
+      foreground: true,
       color: paletteSpec.rock,
       points: [
         [island.x1, mechanics.roadY],
@@ -785,10 +791,10 @@ function buildGeometry(mechanics, paletteSpec) {
       range.x1,
       range.x2,
       mechanics.waterY,
-      mechanics.floorY,
       mechanics.waterWave,
       mechanics.waterPhases[index],
       paletteSpec.water,
+      mechanics.pier !== null,
     );
   });
 
@@ -1001,7 +1007,16 @@ function buildRiverbed(leftX, rightX, waterY, floorY, shape) {
   return points;
 }
 
-function buildWaterBody(id, rawX1, rawX2, surfaceY, floorY, wave, phase, color) {
+function buildWaterBody(
+  id,
+  rawX1,
+  rawX2,
+  surfaceY,
+  wave,
+  phase,
+  color,
+  behindForegroundTerrain,
+) {
   const x1 = snap(Math.min(rawX1, rawX2), 2);
   const x2 = snap(Math.max(rawX1, rawX2), 2);
   const width = Math.max(1, x2 - x1);
@@ -1016,7 +1031,7 @@ function buildWaterBody(id, rawX1, rawX2, surfaceY, floorY, wave, phase, color) 
     ]);
   }
 
-  const bottomY = Math.min(CANVAS_HEIGHT - 16, floorY + 34);
+  const bottomY = CANVAS_HEIGHT + 16;
   const points = [
     ...top,
     [x2, bottomY],
@@ -1028,6 +1043,7 @@ function buildWaterBody(id, rawX1, rawX2, surfaceY, floorY, wave, phase, color) 
     kind: "water",
     color,
     surfaceY,
+    behindForegroundTerrain,
     bounds: boundsForPoints(points),
     points,
   };

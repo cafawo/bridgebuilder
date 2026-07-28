@@ -300,6 +300,15 @@
             const exclusion = level.buildExclusions.find(
               (candidate) => candidate.id === `${water.id}-build-exclusion`,
             );
+            assert(
+              water.points.slice(-2).every(([, y]) => y > level.canvas.height),
+              `${water.id} background terminates inside the viewport`,
+            );
+            equal(
+              water.behindForegroundTerrain,
+              level.challenge.archetype === "fixed_central_pier",
+              `${water.id} uses the wrong terrain layer`,
+            );
             assert(hazard?.type === "water", `${water.id} needs its own water hazard`);
             equal(
               JSON.stringify(hazard.points),
@@ -334,6 +343,10 @@
           if (level.challenge.archetype === "twin_channel_island") {
             assert(level.waterBodies.length >= 2, "twin channels need separate water bodies");
             assert(level.groundSegments.length >= 3, "island must be driveable ground");
+            const islandTerrain = level.terrain.find(
+              (terrain) => terrain.id === "central-island-terrain",
+            );
+            assert(islandTerrain?.foreground, "central island is not rendered above its channels");
           }
           if (level.challenge.archetype === "fixed_central_pier") {
             equal(level.waterBodies.length, 1, "pier channel should use one continuous water body");
@@ -342,14 +355,25 @@
             const pierTerrain = level.terrain.find(
               (terrain) => terrain.id === "central-pier-terrain",
             );
+            const bottomPoints = pierTerrain.points.filter(
+              ([, y]) => y > level.canvas.height,
+            );
+            const visiblePoints = pierTerrain.points.filter(
+              ([, y]) => y <= level.canvas.height,
+            );
+            assert(pierTerrain.foreground, "central pier is not rendered above its channel");
             assert(
               water.bounds.x < pier.x1 &&
                 water.bounds.x + water.bounds.width > pier.x2,
               "water does not continue behind the foreground pier",
             );
+            equal(bottomPoints.length, 2, "foreground pier needs two off-canvas corners");
             assert(
-              Math.max(...pierTerrain.points.map(([, y]) => y)) > level.canvas.height,
-              "foreground pier does not merge below the organic valley floor",
+              Math.min(...bottomPoints.map(([x]) => x)) <
+                Math.min(...visiblePoints.map(([x]) => x)) &&
+                Math.max(...bottomPoints.map(([x]) => x)) >
+                  Math.max(...visiblePoints.map(([x]) => x)),
+              "foreground pier taper does not continue beyond the viewport",
             );
             const pierHazard = level.hazards.find(
               (hazard) => hazard.id === "central-pier-terrain-impact",

@@ -42,9 +42,24 @@ export class Renderer {
     ctx.translate(shake.x, shake.y);
     this.drawBackground(ctx);
     this.drawBackdrop(ctx);
-    this.drawWater(ctx, now);
-    this.drawTerrain(ctx);
-    this.drawTerrainDetails(ctx);
+    const backgroundTerrain = this.level.terrain.filter(
+      (terrain) => terrain.foreground !== true,
+    );
+    const foregroundTerrain = this.level.terrain.filter(
+      (terrain) => terrain.foreground === true,
+    );
+    const rearWater = this.level.waterBodies.filter(
+      (water) => water.behindForegroundTerrain !== true,
+    );
+    const supportWater = this.level.waterBodies.filter(
+      (water) => water.behindForegroundTerrain === true,
+    );
+    this.drawWater(ctx, now, rearWater);
+    this.drawTerrain(ctx, backgroundTerrain);
+    this.drawTerrainDetails(ctx, backgroundTerrain);
+    this.drawWater(ctx, now, supportWater);
+    this.drawTerrain(ctx, foregroundTerrain);
+    this.drawTerrainDetails(ctx, foregroundTerrain);
     this.drawDecorations(ctx, now);
     this.drawRoadEdges(ctx);
 
@@ -99,8 +114,8 @@ export class Renderer {
     }
   }
 
-  drawWater(ctx, now) {
-    for (const water of this.level.waterBodies) {
+  drawWater(ctx, now, waterBodies = this.level.waterBodies) {
+    for (const water of waterBodies) {
       ctx.fillStyle = water.color;
       drawPolygon(ctx, water.points);
       ctx.fill();
@@ -160,23 +175,23 @@ export class Renderer {
     }
   }
 
-  drawTerrain(ctx) {
-    for (const terrain of this.level.terrain) {
+  drawTerrain(ctx, terrainShapes = this.level.terrain) {
+    for (const terrain of terrainShapes) {
       drawPolygon(ctx, terrain.points);
       ctx.fillStyle = terrain.color || this.palette.rock;
       ctx.fill();
     }
   }
 
-  drawTerrainDetails(ctx) {
+  drawTerrainDetails(ctx, terrainShapes = this.level.terrain) {
     const details = this.level.details;
-    if (!details?.strata?.length) {
+    if (!details?.strata?.length || terrainShapes.length === 0) {
       return;
     }
 
     ctx.save();
     ctx.beginPath();
-    for (const terrain of this.level.terrain) {
+    for (const terrain of terrainShapes) {
       terrain.points.forEach(([x, y], index) => {
         if (index === 0) {
           ctx.moveTo(x, y);

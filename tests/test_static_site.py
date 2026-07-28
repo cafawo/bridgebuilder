@@ -122,7 +122,11 @@ def test_current_gameplay_contracts_are_declared():
     assert "KEEP CLEAR" not in renderer
     assert "rockEdge" not in generator + levels + renderer
     assert "edgeColor" not in generator + levels + renderer
-    assert renderer.index("this.drawWater(ctx, now)") < renderer.index("this.drawTerrain(ctx)")
+    rear_water = renderer.index("this.drawWater(ctx, now, rearWater)")
+    background_terrain = renderer.index("this.drawTerrain(ctx, backgroundTerrain)")
+    support_water = renderer.index("this.drawWater(ctx, now, supportWater)")
+    foreground_terrain = renderer.index("this.drawTerrain(ctx, foregroundTerrain)")
+    assert rear_water < background_terrain < support_water < foreground_terrain
 
 
 def test_python_is_test_tooling_only():
