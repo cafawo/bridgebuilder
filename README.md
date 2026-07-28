@@ -53,12 +53,21 @@ exceeding its cost target. The browser submits the event name below after the su
 bridgebuilder-cost/v1/{generatorVersion}/{physicsVersion}/{ratedLoad}/{seed}/{cost}
 ```
 
-Sandbox, failed, under-rated, capacity, and over-target tests are excluded. A versioned local
-minimum prevents equal or more expensive results from being reported again.
+After the same unchanged bridge completes a replay-certified Capacity Test, it can also report its
+maximum load and construction cost:
+
+```text
+bridgebuilder-capacity/v1/{generatorVersion}/{physicsVersion}/{ratedLoad}/{seed}/{cost}/{maxLoad}
+```
+
+Sandbox, failed, under-rated, uncertified, and over-target tests are excluded. Versioned local
+records report only a lower rated-pass cost, a higher certified load, or a better certified
+load-per-cost ratio.
 
 The `Update leaderboard` GitHub Action runs daily at 02:23 UTC and can also be started manually. It
-incrementally reads new GoatCounter paths, retains the lowest cost for each current-version seed,
-and atomically publishes the best 100 to `static/data/leaderboard.json`. Configure it once:
+incrementally reads new GoatCounter paths, retains each current-version seed's lowest cost, highest
+certified load, and best same-bridge load-per-cost ratio, then atomically publishes the best 100
+seeds ranked by cost to `static/data/leaderboard.json`. Configure it once:
 
 1. Create a GoatCounter API token for the `bridgebuilder` site with permission to read paths.
 2. Add it to the GitHub repository as the Actions secret `GOATCOUNTER_API_TOKEN`.

@@ -1,11 +1,14 @@
-export const LEADERBOARD_SCHEMA_VERSION = 1;
+export const LEADERBOARD_SCHEMA_VERSION = 2;
 export const COST_EVENT_VERSION = "v1";
+export const CAPACITY_EVENT_VERSION = "v1";
 export const LEADERBOARD_URL = "static/data/leaderboard.json";
 
 const COST_EVENT_PREFIX = "bridgebuilder-cost";
+const CAPACITY_EVENT_PREFIX = "bridgebuilder-capacity";
 const MAX_LEADERBOARD_ENTRIES = 100;
 const SEED_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
 const sessionReportedCosts = new Map();
+const sessionReportedCapacities = new Map();
 
 export function qualifyingCostRecord({
   gameMode,
@@ -62,12 +65,82 @@ export function costEventPath(record) {
   ].join("/");
 }
 
+export function qualifyingCapacityRecord({
+  gameMode,
+  certified,
+  maxLoad,
+  requiredLoad,
+  cost,
+  maximumCost,
+  seed,
+  generatorVersion,
+  physicsVersion,
+}) {
+  const normalizedCost = Math.round(Number(cost));
+  const normalizedMaximumCost = Math.round(Number(maximumCost));
+  const normalizedLoad = Math.round(Number(maxLoad));
+  const normalizedRequiredLoad = Math.round(Number(requiredLoad));
+  if (
+    gameMode !== "challenge" ||
+    certified !== true ||
+    !validSeed(seed) ||
+    !validVersion(generatorVersion) ||
+    !validVersion(physicsVersion) ||
+    !Number.isFinite(normalizedLoad) ||
+    !Number.isFinite(normalizedRequiredLoad) ||
+    normalizedRequiredLoad <= 0 ||
+    normalizedLoad < normalizedRequiredLoad ||
+    !Number.isFinite(normalizedCost) ||
+    normalizedCost <= 0 ||
+    !Number.isFinite(normalizedMaximumCost) ||
+    normalizedMaximumCost < 0 ||
+    normalizedCost > normalizedMaximumCost
+  ) {
+    return null;
+  }
+  return {
+    seed,
+    cost: normalizedCost,
+    requiredLoad: normalizedRequiredLoad,
+    maxLoad: normalizedLoad,
+    generatorVersion,
+    physicsVersion,
+  };
+}
+
+export function capacityEventPath(record) {
+  const normalized = normalizeCapacityRecord(record);
+  return [
+    CAPACITY_EVENT_PREFIX,
+    CAPACITY_EVENT_VERSION,
+    normalized.generatorVersion,
+    normalized.physicsVersion,
+    normalized.requiredLoad,
+    normalized.seed,
+    normalized.cost,
+    normalized.maxLoad,
+  ].join("/");
+}
+
 export function reportedCostKey(record) {
   const normalized = normalizeCostRecord(record);
   return [
     "bridgebuilder",
     "reported-cost",
     COST_EVENT_VERSION,
+    normalized.generatorVersion,
+    normalized.physicsVersion,
+    normalized.requiredLoad,
+    normalized.seed,
+  ].join(":");
+}
+
+export function reportedCapacityKey(record) {
+  const normalized = normalizeCapacityRecord(record);
+  return [
+    "bridgebuilder",
+    "reported-capacity",
+    CAPACITY_EVENT_VERSION,
     normalized.generatorVersion,
     normalized.physicsVersion,
     normalized.requiredLoad,
@@ -118,6 +191,57 @@ export function submitCostScore(record, options = {}) {
   sessionReportedCosts.set(key, normalized.cost);
   try {
     storage?.setItem(key, String(normalized.cost));
+  } catch {
+    // In-memory deduplication still applies when browser storage is unavailable.
+  }
+  return true;
+}
+
+export function submitCapacityScore(record, options = {}) {
+  let normalized;
+  try {
+    normalized = normalizeCapacityRecord(record);
+  } catch {
+    return false;
+  }
+
+  const providedOptions =
+    options && typeof options === "object" ? options : {};
+  const counter = Object.prototype.hasOwnProperty.call(providedOptions, "counter")
+    ? providedOptions.counter
+    : globalThis.goatcounter;
+  let storage = providedOptions.storage;
+  if (!Object.prototype.hasOwnProperty.call(providedOptions, "storage")) {
+    try {
+      storage = globalThis.localStorage;
+    } catch {
+      storage = null;
+    }
+  }
+
+  const key = reportedCapacityKey(normalized);
+  const previous = mergeCapacityProgress(
+    sessionReportedCapacities.get(key),
+    readStoredCapacity(storage, key),
+  );
+  if (!capacityImproves(normalized, previous) || typeof counter?.count !== "function") {
+    return false;
+  }
+
+  try {
+    counter.count({
+      path: capacityEventPath(normalized),
+      title: `${normalized.seed}: load ${normalized.maxLoad} at cost ${normalized.cost}`,
+      event: true,
+    });
+  } catch {
+    return false;
+  }
+
+  const next = improvedCapacityProgress(normalized, previous);
+  sessionReportedCapacities.set(key, next);
+  try {
+    storage?.setItem(key, JSON.stringify(next));
   } catch {
     // In-memory deduplication still applies when browser storage is unavailable.
   }
@@ -176,22 +300,44 @@ export function validateLeaderboard(data, generatorVersion, physicsVersion) {
 
   const bestBySeed = new Map();
   for (const entry of data.entries) {
+    const highestLoad = entry?.highestLoad ?? null;
+    const loadPerCost = entry?.loadPerCost ?? null;
     if (
       !validSeed(entry?.seed) ||
       !Number.isInteger(entry?.cost) ||
       entry.cost < 0 ||
       !Number.isInteger(entry?.requiredLoad) ||
-      entry.requiredLoad <= 0
+      entry.requiredLoad <= 0 ||
+      !(
+        highestLoad === null ||
+        (Number.isInteger(highestLoad) && highestLoad >= entry.requiredLoad)
+      ) ||
+      !(
+        loadPerCost === null ||
+        (Number.isFinite(loadPerCost) && loadPerCost > 0)
+      ) ||
+      (highestLoad === null) !== (loadPerCost === null)
     ) {
       throw new Error("Leaderboard entry is invalid");
     }
     const previous = bestBySeed.get(entry.seed);
-    if (!previous || entry.cost < previous.cost) {
+    if (!previous) {
       bestBySeed.set(entry.seed, {
         seed: entry.seed,
         cost: entry.cost,
         requiredLoad: entry.requiredLoad,
+        highestLoad,
+        loadPerCost,
       });
+      continue;
+    }
+    if (entry.cost < previous.cost) {
+      previous.cost = entry.cost;
+      previous.requiredLoad = entry.requiredLoad;
+    }
+    if (highestLoad !== null) {
+      previous.highestLoad = Math.max(previous.highestLoad ?? 0, highestLoad);
+      previous.loadPerCost = Math.max(previous.loadPerCost ?? 0, loadPerCost);
     }
   }
 
@@ -245,6 +391,33 @@ function normalizeCostRecord(record) {
   };
 }
 
+function normalizeCapacityRecord(record) {
+  const cost = Number(record?.cost);
+  const requiredLoad = Number(record?.requiredLoad);
+  const maxLoad = Number(record?.maxLoad);
+  if (
+    !validSeed(record?.seed) ||
+    !validVersion(record?.generatorVersion) ||
+    !validVersion(record?.physicsVersion) ||
+    !Number.isInteger(cost) ||
+    cost <= 0 ||
+    !Number.isInteger(requiredLoad) ||
+    requiredLoad <= 0 ||
+    !Number.isInteger(maxLoad) ||
+    maxLoad < requiredLoad
+  ) {
+    throw new Error("Capacity record is invalid");
+  }
+  return {
+    seed: record.seed,
+    cost,
+    requiredLoad,
+    maxLoad,
+    generatorVersion: record.generatorVersion,
+    physicsVersion: record.physicsVersion,
+  };
+}
+
 function readStoredCost(storage, key) {
   try {
     const raw = storage?.getItem(key);
@@ -258,6 +431,86 @@ function readStoredCost(storage, key) {
   } catch {
     return Number.POSITIVE_INFINITY;
   }
+}
+
+function readStoredCapacity(storage, key) {
+  try {
+    const value = JSON.parse(storage?.getItem(key) ?? "null");
+    if (
+      !value ||
+      !Number.isInteger(value.maxLoad) ||
+      value.maxLoad <= 0 ||
+      !Number.isInteger(value.efficiencyLoad) ||
+      value.efficiencyLoad <= 0 ||
+      !Number.isInteger(value.efficiencyCost) ||
+      value.efficiencyCost <= 0
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function mergeCapacityProgress(first, second) {
+  if (!first) {
+    return second ?? null;
+  }
+  if (!second) {
+    return first;
+  }
+  const efficiency =
+    compareEfficiency(
+      first.efficiencyLoad,
+      first.efficiencyCost,
+      second.efficiencyLoad,
+      second.efficiencyCost,
+    ) >= 0
+      ? first
+      : second;
+  return {
+    maxLoad: Math.max(first.maxLoad, second.maxLoad),
+    efficiencyLoad: efficiency.efficiencyLoad,
+    efficiencyCost: efficiency.efficiencyCost,
+  };
+}
+
+function capacityImproves(record, previous) {
+  return (
+    !previous ||
+    record.maxLoad > previous.maxLoad ||
+    compareEfficiency(
+      record.maxLoad,
+      record.cost,
+      previous.efficiencyLoad,
+      previous.efficiencyCost,
+    ) > 0
+  );
+}
+
+function improvedCapacityProgress(record, previous) {
+  const improvesEfficiency =
+    !previous ||
+    compareEfficiency(
+      record.maxLoad,
+      record.cost,
+      previous.efficiencyLoad,
+      previous.efficiencyCost,
+    ) > 0;
+  return {
+    maxLoad: Math.max(previous?.maxLoad ?? 0, record.maxLoad),
+    efficiencyLoad: improvesEfficiency
+      ? record.maxLoad
+      : previous.efficiencyLoad,
+    efficiencyCost: improvesEfficiency
+      ? record.cost
+      : previous.efficiencyCost,
+  };
+}
+
+function compareEfficiency(firstLoad, firstCost, secondLoad, secondCost) {
+  return firstLoad * secondCost - secondLoad * firstCost;
 }
 
 function validSeed(seed) {

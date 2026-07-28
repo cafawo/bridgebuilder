@@ -32,11 +32,15 @@
         generateReferenceBridge,
       } from "../static/game/js/generator.js";
       import {
+        capacityEventPath,
         challengeSeedUrl,
         costEventPath,
         fetchLeaderboard,
+        qualifyingCapacityRecord,
         qualifyingCostRecord,
+        reportedCapacityKey,
         reportedCostKey,
+        submitCapacityScore,
         submitCostScore,
         validateLeaderboard,
       } from "../static/game/js/leaderboard.js";
@@ -907,16 +911,97 @@
         }), "failed submission incorrectly consumed the lower score");
       });
 
+      test("capacity and efficiency submissions are certified, versioned, and independently improved", () => {
+        const base = {
+          gameMode: "challenge",
+          certified: true,
+          maxLoad: 15000,
+          requiredLoad: 9000,
+          cost: 1200,
+          maximumCost: 2000,
+          seed: "browser-capacity-score",
+          generatorVersion: GENERATOR_VERSION,
+          physicsVersion: PHYSICS_VERSION,
+        };
+        equal(qualifyingCapacityRecord({ ...base, gameMode: "sandbox" }), null);
+        equal(qualifyingCapacityRecord({ ...base, certified: false }), null);
+        equal(qualifyingCapacityRecord({ ...base, maxLoad: 8950 }), null);
+        equal(qualifyingCapacityRecord({ ...base, cost: 2001 }), null);
+
+        const record = qualifyingCapacityRecord(base);
+        assert(record, "qualifying capacity record was rejected");
+        equal(
+          capacityEventPath(record),
+          "bridgebuilder-capacity/v1/2.0.0/2.0.0/9000/browser-capacity-score/1200/15000",
+        );
+        equal(
+          reportedCapacityKey(record),
+          "bridgebuilder:reported-capacity:v1:2.0.0:2.0.0:9000:browser-capacity-score",
+        );
+
+        const values = new Map();
+        const storage = {
+          getItem: (key) => values.get(key) ?? null,
+          setItem: (key, value) => values.set(key, value),
+        };
+        const events = [];
+        equal(
+          submitCapacityScore(record, { counter: null, storage }),
+          false,
+          "missing GoatCounter reported capacity success",
+        );
+        assert(
+          submitCapacityScore(record, {
+            counter: { count: (event) => events.push(event) },
+            storage,
+          }),
+          "first capacity record was not sent",
+        );
+        equal(events.length, 1);
+        equal(events[0].event, true);
+        equal(
+          submitCapacityScore(
+            { ...record, maxLoad: 14000, cost: 1400 },
+            { counter: { count: (event) => events.push(event) }, storage },
+          ),
+          false,
+          "inferior capacity and efficiency were sent",
+        );
+        assert(
+          submitCapacityScore(
+            { ...record, maxLoad: 18000, cost: 1800 },
+            { counter: { count: (event) => events.push(event) }, storage },
+          ),
+          "higher maximum load was not sent",
+        );
+        assert(
+          submitCapacityScore(
+            { ...record, maxLoad: 16000, cost: 800 },
+            { counter: { count: (event) => events.push(event) }, storage },
+          ),
+          "better load-per-cost ratio was not sent",
+        );
+        equal(events.length, 3);
+      });
+
       test("leaderboard data is validated, reduced, sorted, and safe to navigate", async () => {
         const entries = Array.from({ length: 105 }, (_, index) => ({
           seed: `board-${String(index).padStart(3, "0")}`,
           cost: 1000 + index,
           requiredLoad: 9000,
+          highestLoad: null,
+          loadPerCost: null,
         }));
-        entries.push({ seed: "board-010", cost: 500, requiredLoad: 9000 });
+        entries.push({
+          seed: "board-010",
+          cost: 500,
+          requiredLoad: 9000,
+          highestLoad: 18000,
+          loadPerCost: 15,
+        });
         const data = validateLeaderboard(
           {
-            schemaVersion: 1,
+            schemaVersion: 2,
             generatedAt: "2026-07-28T02:23:00Z",
             generatorVersion: GENERATOR_VERSION,
             physicsVersion: PHYSICS_VERSION,
@@ -928,6 +1013,8 @@
         equal(data.entries.length, 100);
         equal(data.entries[0].seed, "board-010");
         equal(data.entries[0].cost, 500);
+        equal(data.entries[0].highestLoad, 18000);
+        equal(data.entries[0].loadPerCost, 15);
         expectThrows(
           () => validateLeaderboard(
             {
@@ -943,12 +1030,35 @@
           () => validateLeaderboard(
             {
               ...data,
-              entries: [{ seed: "<script>", cost: 1, requiredLoad: 9000 }],
+              entries: [{
+                seed: "<script>",
+                cost: 1,
+                requiredLoad: 9000,
+                highestLoad: null,
+                loadPerCost: null,
+              }],
             },
             GENERATOR_VERSION,
             PHYSICS_VERSION,
           ),
           "invalid seed was accepted",
+        );
+        expectThrows(
+          () => validateLeaderboard(
+            {
+              ...data,
+              entries: [{
+                seed: "mismatched-metrics",
+                cost: 1,
+                requiredLoad: 9000,
+                highestLoad: 12000,
+                loadPerCost: null,
+              }],
+            },
+            GENERATOR_VERSION,
+            PHYSICS_VERSION,
+          ),
+          "partial capacity metrics were accepted",
         );
 
         const destination = new URL(

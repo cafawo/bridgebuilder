@@ -294,7 +294,7 @@ button:disabled {
 
 .leaderboard-card {
   display: grid;
-  width: min(680px, 100%);
+  width: min(880px, 100%);
   max-height: min(620px, calc(100% - 10px));
   min-height: 250px;
   gap: 10px;
@@ -339,6 +339,7 @@ button:disabled {
 
 #leaderboard-table {
   width: 100%;
+  min-width: 650px;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
 }
@@ -361,8 +362,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
-#leaderboard-table th:last-child,
-#leaderboard-table td:last-child {
+#leaderboard-table th:not(:first-child),
+#leaderboard-table td:not(:first-child) {
   text-align: right;
 }
 

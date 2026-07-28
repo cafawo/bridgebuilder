@@ -73,7 +73,7 @@ def test_leaderboard_snapshot_and_workflow_are_static_and_secret_safe():
     workflow = read(".github/workflows/update-leaderboard.yml")
     updater = read(".github/scripts/update-leaderboard.ps1")
 
-    assert snapshot["schemaVersion"] == 1
+    assert snapshot["schemaVersion"] == 2
     assert snapshot["generatorVersion"] == "2.0.0"
     assert snapshot["physicsVersion"] == "2.0.0"
     assert isinstance(snapshot["lastPathId"], int) and snapshot["lastPathId"] >= 0
@@ -90,6 +90,18 @@ def test_leaderboard_snapshot_and_workflow_are_static_and_secret_safe():
         and entry["cost"] >= 0
         and isinstance(entry["requiredLoad"], int)
         and entry["requiredLoad"] > 0
+        and (
+            (
+                entry["highestLoad"] is None
+                and entry["loadPerCost"] is None
+            )
+            or (
+                isinstance(entry["highestLoad"], int)
+                and entry["highestLoad"] >= entry["requiredLoad"]
+                and isinstance(entry["loadPerCost"], (int, float))
+                and entry["loadPerCost"] > 0
+            )
+        )
         for entry in snapshot["entries"]
     )
     assert 'cron: "23 2 * * *"' in workflow
@@ -98,6 +110,7 @@ def test_leaderboard_snapshot_and_workflow_are_static_and_secret_safe():
     assert "pages/builds" in workflow
     assert "Move-Item" in updater
     assert "bridgebuilder-cost" in updater
+    assert "bridgebuilder-capacity" in updater
 
 
 def test_current_gameplay_contracts_are_declared():

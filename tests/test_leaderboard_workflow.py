@@ -65,6 +65,22 @@ def test_workflow_aggregates_minimum_cost_incrementally_and_preserves_failures(t
             "event": True,
             "path": "bridgebuilder-cost/v1/2.0.0/2.0.0/9000/<bad-seed>/10",
         },
+        {
+            "id": 8,
+            "event": True,
+            "path": (
+                "bridgebuilder-capacity/v1/2.0.0/2.0.0/9000/"
+                "seed-a/800/20000"
+            ),
+        },
+        {
+            "id": 9,
+            "event": True,
+            "path": (
+                "bridgebuilder-capacity/v1/2.0.0/2.0.0/9000/"
+                "seed-a/300/10000"
+            ),
+        },
     ]
     for index in range(105):
         paths.append(
@@ -79,6 +95,22 @@ def test_workflow_aggregates_minimum_cost_incrementally_and_preserves_failures(t
         )
     paths.extend(
         [
+            {
+                "id": 440,
+                "event": True,
+                "path": (
+                    "bridgebuilder-capacity/v1/old/2.0.0/9000/"
+                    "old-capacity/1/999999"
+                ),
+            },
+            {
+                "id": 441,
+                "event": True,
+                "path": (
+                    "bridgebuilder-capacity/v1/2.0.0/2.0.0/9000/"
+                    "malformed-capacity/100/not-a-load"
+                ),
+            },
             {
                 "id": 450,
                 "event": True,
@@ -111,8 +143,10 @@ def test_workflow_aggregates_minimum_cost_incrementally_and_preserves_failures(t
     assert len(snapshot["entries"]) == 100
     assert snapshot["entries"][0] == {
         "seed": "seed-a",
-        "cost": 400,
+        "cost": 300,
         "requiredLoad": 9000,
+        "highestLoad": 20000,
+        "loadPerCost": 33.333333,
     }
     assert snapshot["entries"] == sorted(
         snapshot["entries"], key=lambda entry: (entry["cost"], entry["seed"])
@@ -143,6 +177,14 @@ def test_workflow_aggregates_minimum_cost_incrementally_and_preserves_failures(t
                                     "seed-a/450"
                                 ),
                             },
+                            {
+                                "id": 503,
+                                "event": True,
+                                "path": (
+                                    "bridgebuilder-capacity/v1/2.0.0/2.0.0/9000/"
+                                    "seed-a/350/24000"
+                                ),
+                            },
                         ],
                         "more": False,
                     }
@@ -153,10 +195,13 @@ def test_workflow_aggregates_minimum_cost_incrementally_and_preserves_failures(t
     completed = run_updater(executable, output, second_fixture)
     assert completed.returncode == 0, completed.stderr
     snapshot = json.loads(output.read_text(encoding="utf-8"))
-    assert snapshot["lastPathId"] == 502
+    assert snapshot["lastPathId"] == 503
     assert snapshot["entries"][0]["seed"] == "seed-104"
     assert snapshot["entries"][0]["cost"] == 50
-    assert next(entry for entry in snapshot["entries"] if entry["seed"] == "seed-a")["cost"] == 400
+    seed_a = next(entry for entry in snapshot["entries"] if entry["seed"] == "seed-a")
+    assert seed_a["cost"] == 300
+    assert seed_a["highestLoad"] == 24000
+    assert seed_a["loadPerCost"] == 68.571429
 
     before_failure = output.read_bytes()
     completed = run_updater(executable, output)
@@ -171,7 +216,7 @@ def test_workflow_resets_incompatible_version_state(tmp_path):
     output.write_text(
         json.dumps(
             {
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "generatedAt": "2026-07-26T02:23:00Z",
                 "generatorVersion": "old",
                 "physicsVersion": "2.0.0",
@@ -210,5 +255,11 @@ def test_workflow_resets_incompatible_version_state(tmp_path):
     assert snapshot["generatorVersion"] == "2.0.0"
     assert snapshot["physicsVersion"] == "2.0.0"
     assert snapshot["entries"] == [
-        {"seed": "current-seed", "cost": 700, "requiredLoad": 9000}
+        {
+            "seed": "current-seed",
+            "cost": 700,
+            "requiredLoad": 9000,
+            "highestLoad": None,
+            "loadPerCost": None,
+        }
     ]

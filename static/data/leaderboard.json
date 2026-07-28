@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedAt": "2026-07-28T12:44:01.4791784Z",
   "generatorVersion": "2.0.0",
   "physicsVersion": "2.0.0",
@@ -8,7 +8,9 @@
     {
       "seed": "34qvjct8ge",
       "cost": 4480,
-      "requiredLoad": 13200
+      "requiredLoad": 13200,
+      "highestLoad": null,
+      "loadPerCost": null
     }
   ]
 }

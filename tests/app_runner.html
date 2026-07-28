@@ -294,13 +294,25 @@
             app.window.fetch = async () => ({
               ok: true,
               json: async () => ({
-                schemaVersion: 1,
+                schemaVersion: 2,
                 generatedAt: "2026-07-27T02:23:00Z",
                 generatorVersion: state.generatorVersion,
                 physicsVersion: state.physicsVersion,
                 entries: [
-                  { seed: "leaderboard-expensive", cost: 1600, requiredLoad: 9000 },
-                  { seed: "leaderboard-cheap", cost: 900, requiredLoad: 8000 },
+                  {
+                    seed: "leaderboard-expensive",
+                    cost: 1600,
+                    requiredLoad: 9000,
+                    highestLoad: null,
+                    loadPerCost: null,
+                  },
+                  {
+                    seed: "leaderboard-cheap",
+                    cost: 900,
+                    requiredLoad: 8000,
+                    highestLoad: 24000,
+                    loadPerCost: 26.666667,
+                  },
                 ],
               }),
             });
@@ -309,13 +321,32 @@
             const headers = [...table.querySelectorAll("th")].map((cell) =>
               cell.textContent.trim().toUpperCase(),
             );
-            equal(JSON.stringify(headers), JSON.stringify(["SEED", "BEST COST"]));
+            equal(
+              JSON.stringify(headers),
+              JSON.stringify(["SEED", "BEST COST", "HIGHEST LOAD", "LOAD / $"]),
+            );
             const rows = [...table.querySelectorAll("tbody tr")];
             equal(rows.length, 2, "leaderboard row count is wrong");
             equal(
               rows[0].querySelector("a").textContent,
               "leaderboard-cheap",
               "leaderboard was not cost-sorted",
+            );
+            const cheapCells = [...rows[0].querySelectorAll("td")].map((cell) =>
+              cell.textContent.trim(),
+            );
+            equal(
+              JSON.stringify(cheapCells),
+              JSON.stringify(["leaderboard-cheap", "900", "24,000", "26.67"]),
+              "capacity metrics were not rendered",
+            );
+            const expensiveCells = [...rows[1].querySelectorAll("td")].map((cell) =>
+              cell.textContent.trim(),
+            );
+            equal(
+              JSON.stringify(expensiveCells),
+              JSON.stringify(["leaderboard-expensive", "1,600", "—", "—"]),
+              "missing capacity metrics did not render safely",
             );
             assert(
               /Updated/.test(app.document.getElementById("leaderboard-updated").textContent),

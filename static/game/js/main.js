@@ -15,9 +15,11 @@ import { BridgeEditor } from "./editor.js?v=challenge3";
 import {
   challengeSeedUrl,
   fetchLeaderboard,
+  qualifyingCapacityRecord,
   qualifyingCostRecord,
+  submitCapacityScore,
   submitCostScore,
-} from "./leaderboard.js?v=challenge3";
+} from "./leaderboard.js?v=challenge4";
 import { loadLevel, normalizeSeed } from "./levels.js?v=challenge3";
 import {
   BridgeSimulation,
@@ -79,6 +81,7 @@ let lastTestCode = "";
 let handledSimulation = null;
 let capacitySearch = null;
 let capacitySnapshot = null;
+let capacityTestCost = 0;
 let basePassedCode = "";
 let bestRecord = null;
 let systemMessage = "";
@@ -579,6 +582,7 @@ function startCapacityTest() {
   }
 
   capacitySnapshot = editor.snapshot();
+  capacityTestCost = Math.round(editor.totalCost());
   capacitySearch = new CapacitySearch(level, capacitySnapshot, {
     startLoad: level.challenge.ratedLoad,
     resolution: 50,
@@ -610,8 +614,10 @@ function advanceCapacity() {
 
   const result = state.result;
   const design = safeDesignCode();
+  const certifiedCost = capacityTestCost;
   capacitySearch = null;
   capacitySnapshot = null;
+  capacityTestCost = 0;
   updateCapacityProgress(null);
 
   if (!result || result.cancelled) {
@@ -644,6 +650,20 @@ function advanceCapacity() {
   if (gameMode === "challenge") {
     saveBestRecord(maxLoad, design, passTelemetry);
   }
+  const capacityRecord = qualifyingCapacityRecord({
+    gameMode,
+    certified: true,
+    maxLoad,
+    requiredLoad: level.challenge.ratedLoad,
+    cost: certifiedCost,
+    maximumCost: level.budget,
+    seed: currentSeed,
+    generatorVersion: level.generator.version,
+    physicsVersion: PHYSICS_VERSION,
+  });
+  if (capacityRecord) {
+    submitCapacityScore(capacityRecord);
+  }
   const boundary = result.capReached || failingLoad == null
     ? `${formatNumber(maxLoad)} passed; the 64× search cap was reached.`
     : `${formatNumber(maxLoad)} passed; ${formatNumber(failingLoad)} failed.`;
@@ -665,6 +685,7 @@ function cancelCapacity() {
   }
   capacitySearch = null;
   capacitySnapshot = null;
+  capacityTestCost = 0;
   updateCapacityProgress(null);
   updateControls();
 }
@@ -1002,7 +1023,9 @@ function renderLeaderboard(data) {
       row.dataset.href = destination;
       row.setAttribute(
         "aria-label",
-        `Open seed ${entry.seed}, best cost ${formatNumber(entry.cost)}`,
+        `Open seed ${entry.seed}, best cost ${formatNumber(entry.cost)}, ` +
+          `highest load ${formatOptionalNumber(entry.highestLoad)}, ` +
+          `load per dollar ${formatLoadPerCost(entry.loadPerCost)}`,
       );
 
       const seedCell = document.createElement("td");
@@ -1013,7 +1036,14 @@ function renderLeaderboard(data) {
 
       const costCell = document.createElement("td");
       costCell.textContent = formatNumber(entry.cost);
-      row.append(seedCell, costCell);
+
+      const loadCell = document.createElement("td");
+      loadCell.textContent = formatOptionalNumber(entry.highestLoad);
+
+      const efficiencyCell = document.createElement("td");
+      efficiencyCell.textContent = formatLoadPerCost(entry.loadPerCost);
+
+      row.append(seedCell, costCell, loadCell, efficiencyCell);
       controls.leaderboardBody.append(row);
     }
     controls.leaderboardStatus.textContent = "";
@@ -1160,6 +1190,19 @@ function announce(message) {
 
 function formatNumber(value) {
   return Math.round(Number(value) || 0).toLocaleString("en-US");
+}
+
+function formatOptionalNumber(value) {
+  return value === null ? "—" : formatNumber(value);
+}
+
+function formatLoadPerCost(value) {
+  return value === null
+    ? "—"
+    : Number(value).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 }
 
 function formatPercent(value) {
