@@ -3,6 +3,8 @@
 A static browser-based bridge-building game inspired by classic Bridge Builder puzzles. The whole
 game runs from GitHub Pages: root HTML, static CSS, vanilla JavaScript, and one HTML5 Canvas.
 
+🚀 **Start playing here:** [https://wbk.ing/bridgebuilder/](https://wbk.ing/bridgebuilder/)
+
 The editor, renderer, deterministic physics simulation, capacity search, persistence, and procedural
 level generator all run in the browser. Challenge mode asks you to pass a seed's rated load, then
 certifies the maximum load the unchanged bridge can carry. Every challenge also has an attainable
