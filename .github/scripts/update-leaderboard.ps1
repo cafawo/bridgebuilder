@@ -256,11 +256,29 @@ if ($FixturePath) {
     Accept = "application/json"
     "Content-Type" = "application/json"
   }
+  $resetCursorAfterNotFound = $false
   $more = $true
   while ($more) {
     $cursorBeforeRequest = $lastPathId
     $uri = "$($ApiBase.TrimEnd('/'))/paths?limit=200&after=$lastPathId"
-    $page = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    try {
+      $page = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    } catch {
+      $statusCode = $null
+      if ($null -ne $_.Exception.Response -and $null -ne $_.Exception.Response.StatusCode) {
+        $statusCode = [Int32]$_.Exception.Response.StatusCode
+      }
+      if (
+        $statusCode -eq 404 -and
+        -not $resetCursorAfterNotFound -and
+        $lastPathId -gt 0
+      ) {
+        $lastPathId = 0L
+        $resetCursorAfterNotFound = $true
+        continue
+      }
+      throw
+    }
     if ($null -eq $page.paths) {
       throw "GoatCounter response does not contain paths"
     }

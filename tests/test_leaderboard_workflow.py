@@ -1,6 +1,9 @@
 import json
+import threading
 import shutil
 import subprocess
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 
 import pytest
@@ -13,7 +16,7 @@ def powershell():
     return shutil.which("pwsh") or shutil.which("powershell")
 
 
-def run_updater(executable, output, fixture=None):
+def run_updater(executable, output, fixture=None, token=None, api_base=None):
     command = [
         executable,
         "-NoProfile",
@@ -28,6 +31,10 @@ def run_updater(executable, output, fixture=None):
         "-PhysicsPath",
         str(ROOT / "static" / "game" / "js" / "physics.js"),
     ]
+    if token:
+        command.extend(["-Token", token])
+    if api_base:
+        command.extend(["-ApiBase", api_base])
     if fixture:
         command.extend(["-FixturePath", str(fixture)])
     return subprocess.run(command, check=False, capture_output=True, text=True)
@@ -262,4 +269,102 @@ def test_workflow_resets_incompatible_version_state(tmp_path):
             "highestLoad": None,
             "loadPerCost": None,
         }
+    ]
+
+
+@pytest.mark.skipif(not powershell(), reason="PowerShell is required for workflow fixture checks")
+def test_workflow_retries_from_zero_cursor_after_404(tmp_path):
+    executable = powershell()
+    output = tmp_path / "leaderboard.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "generatedAt": "2026-07-30T00:00:00Z",
+                "generatorVersion": "2.0.0",
+                "physicsVersion": "2.0.0",
+                "lastPathId": 5,
+                "entries": [{"seed": "existing", "cost": 900, "requiredLoad": 9000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class GoatCounterHandler(BaseHTTPRequestHandler):
+        requests = []
+
+        def do_GET(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            after = query.get("after", [""])[0]
+            GoatCounterHandler.requests.append(after)
+            if parsed.path != "/api/v0/paths":
+                self.send_response(404)
+                self.end_headers()
+                return
+            if after == "5":
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Not found")
+                return
+            if after == "0":
+                body = json.dumps(
+                    {
+                        "paths": [
+                            {
+                                "id": 10,
+                                "event": True,
+                                "path": "bridgebuilder-cost/v1/2.0.0/2.0.0/9000/new-seed/700",
+                            }
+                        ],
+                        "more": False,
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), GoatCounterHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        completed = run_updater(
+            executable,
+            output,
+            token="test-token",
+            api_base=f"http://127.0.0.1:{server.server_port}/api/v0",
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert completed.returncode == 0, completed.stderr
+    assert GoatCounterHandler.requests == ["5", "0"]
+    snapshot = json.loads(output.read_text(encoding="utf-8"))
+    assert snapshot["lastPathId"] == 10
+    assert snapshot["entries"][:2] == [
+        {
+            "seed": "new-seed",
+            "cost": 700,
+            "requiredLoad": 9000,
+            "highestLoad": None,
+            "loadPerCost": None,
+        },
+        {
+            "seed": "existing",
+            "cost": 900,
+            "requiredLoad": 9000,
+            "highestLoad": None,
+            "loadPerCost": None,
+        },
     ]
