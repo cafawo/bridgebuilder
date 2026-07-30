@@ -1,10 +1,10 @@
 import json
-import threading
 import shutil
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlparse
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
