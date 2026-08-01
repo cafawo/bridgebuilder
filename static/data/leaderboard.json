@@ -1,16 +1,16 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-29T05:33:18.5374402Z",
+  "generatedAt": "2026-08-01T05:38:10.1693346Z",
   "generatorVersion": "2.0.0",
   "physicsVersion": "2.0.0",
-  "lastPathId": 96852961,
+  "lastPathId": 97133121,
   "entries": [
     {
       "seed": "34qvjct8ge",
       "cost": 4480,
       "requiredLoad": 13200,
-      "highestLoad": null,
-      "loadPerCost": null
+      "highestLoad": 15700,
+      "loadPerCost": 3.504464
     }
   ]
 }
