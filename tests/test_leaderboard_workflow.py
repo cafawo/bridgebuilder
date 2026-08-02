@@ -1,7 +1,10 @@
 import json
 import shutil
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -13,7 +16,15 @@ def powershell():
     return shutil.which("pwsh") or shutil.which("powershell")
 
 
-def run_updater(executable, output, fixture=None):
+def run_updater(
+    executable,
+    output,
+    fixture=None,
+    token=None,
+    api_base=None,
+    request_max_attempts=None,
+    retry_delay_seconds=None,
+):
     command = [
         executable,
         "-NoProfile",
@@ -28,6 +39,14 @@ def run_updater(executable, output, fixture=None):
         "-PhysicsPath",
         str(ROOT / "static" / "game" / "js" / "physics.js"),
     ]
+    if token:
+        command.extend(["-Token", token])
+    if api_base:
+        command.extend(["-ApiBase", api_base])
+    if request_max_attempts is not None:
+        command.extend(["-RequestMaxAttempts", str(request_max_attempts)])
+    if retry_delay_seconds is not None:
+        command.extend(["-RetryDelaySeconds", str(retry_delay_seconds)])
     if fixture:
         command.extend(["-FixturePath", str(fixture)])
     return subprocess.run(command, check=False, capture_output=True, text=True)
@@ -262,4 +281,123 @@ def test_workflow_resets_incompatible_version_state(tmp_path):
             "highestLoad": None,
             "loadPerCost": None,
         }
+    ]
+
+
+@pytest.mark.skipif(not powershell(), reason="PowerShell is required for workflow fixture checks")
+@pytest.mark.parametrize("replay_succeeds", [True, False], ids=["recovers", "fails-closed"])
+def test_workflow_handles_cursor_404_without_masking_persistent_failure(
+    tmp_path, replay_succeeds
+):
+    executable = powershell()
+    output = tmp_path / "leaderboard.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "generatedAt": "2026-07-30T00:00:00Z",
+                "generatorVersion": "2.0.0",
+                "physicsVersion": "2.0.0",
+                "lastPathId": 5,
+                "entries": [{"seed": "existing", "cost": 900, "requiredLoad": 9000}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_snapshot = output.read_bytes()
+
+    class GoatCounterHandler(BaseHTTPRequestHandler):
+        requests = []
+
+        def do_GET(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            after = query.get("after", [""])[0]
+            GoatCounterHandler.requests.append(after)
+            if parsed.path != "/api/v0/paths":
+                self.send_response(404)
+                self.end_headers()
+                return
+            if after == "5":
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Not found")
+                return
+            if after == "0" and replay_succeeds:
+                body = json.dumps(
+                    {
+                        "paths": [
+                            {
+                                "id": 10,
+                                "event": True,
+                                "path": (
+                                    "bridgebuilder-cost/v1/2.0.0/2.0.0/"
+                                    "9000/new-seed/700"
+                                ),
+                            }
+                        ],
+                        "more": False,
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if after == "0":
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"Not found")
+                return
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), GoatCounterHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        completed = run_updater(
+            executable,
+            output,
+            token="test-token",
+            api_base=f"http://127.0.0.1:{server.server_port}/api/v0",
+            request_max_attempts=2,
+            retry_delay_seconds=0,
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    if not replay_succeeds:
+        assert completed.returncode != 0
+        assert GoatCounterHandler.requests == ["5", "5", "0", "0"]
+        assert output.read_bytes() == original_snapshot
+        return
+
+    assert completed.returncode == 0, completed.stderr
+    assert GoatCounterHandler.requests == ["5", "5", "0"]
+    snapshot = json.loads(output.read_text(encoding="utf-8"))
+    assert snapshot["lastPathId"] == 10
+    assert snapshot["entries"][:2] == [
+        {
+            "seed": "new-seed",
+            "cost": 700,
+            "requiredLoad": 9000,
+            "highestLoad": None,
+            "loadPerCost": None,
+        },
+        {
+            "seed": "existing",
+            "cost": 900,
+            "requiredLoad": 9000,
+            "highestLoad": None,
+            "loadPerCost": None,
+        },
     ]

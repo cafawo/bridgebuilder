@@ -4,7 +4,11 @@ param(
   [string]$OutputPath = "static/data/leaderboard.json",
   [string]$GeneratorPath = "static/game/js/generator.js",
   [string]$PhysicsPath = "static/game/js/physics.js",
-  [string]$FixturePath = ""
+  [string]$FixturePath = "",
+  [ValidateRange(1, 10)]
+  [int]$RequestMaxAttempts = 3,
+  [ValidateRange(0, 60)]
+  [int]$RetryDelaySeconds = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +58,59 @@ function Convert-ToDecimal {
     return $parsed
   }
   return $null
+}
+
+function Get-HttpStatusCode {
+  param([object]$ErrorRecord)
+
+  if (
+    $null -ne $ErrorRecord.Exception.Response -and
+    $null -ne $ErrorRecord.Exception.Response.StatusCode
+  ) {
+    return [Int32]$ErrorRecord.Exception.Response.StatusCode
+  }
+  return $null
+}
+
+function Invoke-GoatCounterPathsRequest {
+  param(
+    [string]$Uri,
+    [hashtable]$Headers,
+    [int]$MaxAttempts,
+    [int]$InitialRetryDelaySeconds
+  )
+
+  $retryableStatusCodes = @(404, 408, 429, 500, 502, 503, 504)
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    try {
+      return Invoke-RestMethod `
+        -Uri $Uri `
+        -Headers $Headers `
+        -Method Get `
+        -TimeoutSec 30
+    } catch {
+      $statusCode = Get-HttpStatusCode -ErrorRecord $_
+      $retryable =
+        $null -eq $statusCode -or
+        $retryableStatusCodes -contains $statusCode
+      if (-not $retryable -or $attempt -eq $MaxAttempts) {
+        throw
+      }
+      $failure = if ($null -eq $statusCode) {
+        "a network error"
+      } else {
+        "HTTP $statusCode"
+      }
+      Write-Warning (
+        "GoatCounter request failed with $failure; " +
+        "retrying ($($attempt + 1)/$MaxAttempts)"
+      )
+      if ($InitialRetryDelaySeconds -gt 0) {
+        Start-Sleep -Seconds ($InitialRetryDelaySeconds * $attempt)
+      }
+    }
+  }
+  throw "GoatCounter request exhausted its retry attempts"
 }
 
 function Add-BestEntry {
@@ -256,11 +313,34 @@ if ($FixturePath) {
     Accept = "application/json"
     "Content-Type" = "application/json"
   }
+  $replayedFromStart = $false
   $more = $true
   while ($more) {
     $cursorBeforeRequest = $lastPathId
     $uri = "$($ApiBase.TrimEnd('/'))/paths?limit=200&after=$lastPathId"
-    $page = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    try {
+      $page = Invoke-GoatCounterPathsRequest `
+        -Uri $uri `
+        -Headers $headers `
+        -MaxAttempts $RequestMaxAttempts `
+        -InitialRetryDelaySeconds $RetryDelaySeconds
+    } catch {
+      $statusCode = Get-HttpStatusCode -ErrorRecord $_
+      if (
+        $statusCode -eq 404 -and
+        -not $replayedFromStart -and
+        $lastPathId -gt 0
+      ) {
+        Write-Warning (
+          "GoatCounter repeatedly returned HTTP 404 for cursor $lastPathId; " +
+          "replaying paths from cursor 0"
+        )
+        $lastPathId = 0L
+        $replayedFromStart = $true
+        continue
+      }
+      throw
+    }
     if ($null -eq $page.paths) {
       throw "GoatCounter response does not contain paths"
     }
